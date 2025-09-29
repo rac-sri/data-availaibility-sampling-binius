@@ -1,0 +1,15 @@
+[package]
+name = "binius-das-poc"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+binius-prover = { path = "../binius/binius64/prover/prover" }
+binius-verifier = { path = "../binius/binius64/verifier/verifier" }
+binius-math = {path = "../binius/binius64/verifier/math"}
+binius-field = {path = "../binius/binius64/verifier/field"}
+rand = { version = "0.9.1", default-features = false, features = [
+    "std",
+    "std_rng",
+] }
