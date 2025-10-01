@@ -30,7 +30,9 @@ dependencies = [
  "binius-field",
  "binius-math",
  "binius-prover",
+ "binius-transcript",
  "binius-verifier",
+ "itertools",
  "rand",
 ]
 

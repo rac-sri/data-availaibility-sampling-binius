@@ -9,7 +9,9 @@ binius-prover = { path = "../binius/binius64/prover/prover" }
 binius-verifier = { path = "../binius/binius64/verifier/verifier" }
 binius-math = {path = "../binius/binius64/verifier/math"}
 binius-field = {path = "../binius/binius64/verifier/field"}
+binius-transcript = {path = "../binius/binius64/verifier/transcript"}
 rand = { version = "0.9.1", default-features = false, features = [
     "std",
     "std_rng",
 ] }
+itertools = "0.14.0"
