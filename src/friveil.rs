@@ -1,4 +1,4 @@
-use binius_field::{BinaryField, ExtensionField, Field, PackedExtension, PackedField};
+use binius_field::{ExtensionField, Field, PackedExtension, PackedField};
 use binius_math::{
     BinarySubspace, FieldBuffer, ReedSolomonCode,
     inner_product::inner_product,
@@ -170,12 +170,14 @@ where
             > as MerkleTreeProver<P::Scalar>>::Committed,
         >,
         evaluation_point: &[P::Scalar],
-    ) -> Result<(VerifierTranscript<StdChallenger>, FRIParams<P::Scalar>), String> {
+    ) -> Result<(VerifierTranscript<StdChallenger>), String> {
         let pcs = OneBitPCSProver::new(ntt, &self.merkle_prover, &fri_params);
 
         let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
 
-        prover_transcript.message().write(&commit_output.commitment);
+        prover_transcript
+            .message()
+            .write_bytes(&commit_output.commitment);
 
         pcs.prove(
             &commit_output.codeword,
@@ -186,7 +188,7 @@ where
         )
         .map_err(|e| e.to_string())?;
 
-        Ok((prover_transcript.into_verifier(), fri_params))
+        Ok((prover_transcript.into_verifier()))
     }
 
     pub fn verify_and_open(

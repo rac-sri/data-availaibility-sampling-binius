@@ -58,10 +58,10 @@ fn main() {
         .commit(packed_mle.clone(), fri_params.clone(), &ntt)
         .unwrap();
 
-    let (mut verifier_transcript, fri_params) = friveil
+    let (mut verifier_transcript) = friveil
         .prove(
             packed_mle,
-            fri_params,
+            fri_params.clone(),
             &ntt,
             &commit_output,
             &evaluation_point,
