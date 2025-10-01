@@ -3,7 +3,10 @@ use binius_math::{
     BinarySubspace, FieldBuffer, ReedSolomonCode,
     inner_product::inner_product,
     multilinear::eq::eq_ind_partial_eval,
-    ntt::{NeighborsLastSingleThread, domain_context},
+    ntt::{
+        NeighborsLastSingleThread,
+        domain_context::{self, GenericPreExpanded},
+    },
 };
 use binius_prover::{
     hash::parallel_compression::ParallelCompressionAdaptor,
@@ -14,6 +17,7 @@ use binius_verifier::{
     config::{B1, B128, StdChallenger},
     fri::FRIParams,
     hash::{StdCompression, StdDigest},
+    merkle_tree::BinaryMerkleTreeScheme,
     pcs::verify,
 };
 use itertools::Itertools;
@@ -40,13 +44,28 @@ fn main() {
 
     let packed_mle_values = random_scalars::<B128>(&mut rng, 1 << big_field_n_vars);
 
-    let friveil =
-        FriVeil::<B128>::new(LOG_INV_RATE, NUM_TEST_QUERIES, n_vars, log_scalar_bit_width);
+    let friveil = FriVeil::<
+        B128,
+        BinaryMerkleTreeScheme<B128, StdDigest, StdCompression>,
+        NeighborsLastSingleThread<GenericPreExpanded<B128>>,
+    >::new(LOG_INV_RATE, NUM_TEST_QUERIES, n_vars);
     let (evaluation_point, evaluation_claim) = friveil
         .calculate_evaluation_context(&packed_mle_values)
         .unwrap();
-    let (mut verifier_transcript, committed_rs_code, fri_params) = friveil
-        .prove(&packed_mle_values, &evaluation_point)
+    let (packed_mle, fri_params, ntt) = friveil.initialize_fri_context(&packed_mle_values).unwrap();
+
+    let commit_output = friveil
+        .commit(packed_mle.clone(), fri_params.clone(), &ntt)
+        .unwrap();
+
+    let (mut verifier_transcript, fri_params) = friveil
+        .prove(
+            packed_mle,
+            fri_params,
+            &ntt,
+            &commit_output,
+            &evaluation_point,
+        )
         .unwrap();
 
     let result = friveil.verify_and_open(
@@ -57,82 +76,6 @@ fn main() {
     );
 
     println!("result: {:?}", result);
-
-    // let lifted_small_field_mle = lift_small_to_large_field(&large_field_mle_to_small_field_mle::<
-    //     B1,
-    //     B128,
-    // >(&packed_mle_values));
-
-    // let evaluation_point = random_scalars::<B128>(&mut rng, n_vars);
-    // assert!(1 << evaluation_point.len() == lifted_small_field_mle.len());
-    // let evaluation_claim = inner_product::<B128>(
-    //     lifted_small_field_mle,
-    //     eq_ind_partial_eval(&evaluation_point)
-    //         .as_ref()
-    //         .iter()
-    //         .copied()
-    //         .collect_vec(),
-    // );
-
-    // let merkle_prover = BinaryMerkleTreeProver::<B128, StdDigest, _>::new(
-    //     ParallelCompressionAdaptor::new(StdCompression::default()),
-    // );
-
-    // let committed_rs_code =
-    //     ReedSolomonCode::<B128>::new(packed_mle.log_len(), LOG_INV_RATE).unwrap();
-
-    // let fri_log_batch_size = 0;
-
-    // // fri arities must support the packing width of the mle
-    // let fri_arities = if P::LOG_WIDTH == 2 {
-    //     vec![2, 2]
-    // } else {
-    //     vec![1; packed_mle.log_len() - 1]
-    // };
-
-    // let fri_params = FRIParams::new(
-    //     committed_rs_code,
-    //     fri_log_batch_size,
-    //     fri_arities,
-    //     NUM_TEST_QUERIES,
-    // )
-    // .unwrap();
-
-    // let subspace = BinarySubspace::with_dim(fri_params.rs_code().log_len()).unwrap();
-    // let domain_context = domain_context::GenericPreExpanded::generate_from_subspace(&subspace);
-    // let ntt = NeighborsLastSingleThread::new(domain_context);
-
-    // let pcs = OneBitPCSProver::new(&ntt, &merkle_prover, &fri_params);
-
-    // let commit_output = pcs.commit(packed_mle.clone()).unwrap();
-
-    // let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
-    // prover_transcript.message().write(&commit_output.commitment);
-
-    // let i = pcs.prove(
-    //     &commit_output.codeword,
-    //     &commit_output.committed,
-    //     packed_mle,
-    //     evaluation_point.clone(),
-    //     &mut prover_transcript,
-    // );
-
-    // println!("i: {:?}", i);
-
-    // let mut verifier_transcript = prover_transcript.into_verifier();
-
-    // let retrieved_codeword_commitment = verifier_transcript.message().read().unwrap();
-
-    // let result = verify(
-    //     &mut verifier_transcript,
-    //     evaluation_claim,
-    //     &evaluation_point,
-    //     retrieved_codeword_commitment,
-    //     &fri_params,
-    //     merkle_prover.scheme(),
-    // );
-
-    // println!("result: {:?}", result);
 }
 
 pub fn random_scalars<F: Field>(mut rng: impl RngCore, n: usize) -> Vec<F> {

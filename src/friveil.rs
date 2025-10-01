@@ -4,47 +4,51 @@ use binius_math::{
     inner_product::inner_product,
     multilinear::eq::eq_ind_partial_eval,
     ntt::{
-        NeighborsLastSingleThread,
+        AdditiveNTT, NeighborsLastSingleThread,
         domain_context::{self, GenericPreExpanded},
     },
 };
 use binius_prover::{
+    fri::CommitOutput,
     hash::parallel_compression::ParallelCompressionAdaptor,
-    merkle_tree::prover::BinaryMerkleTreeProver, pcs::OneBitPCSProver,
+    merkle_tree::{MerkleTreeProver, prover::BinaryMerkleTreeProver},
+    pcs::OneBitPCSProver,
 };
 use binius_transcript::{ProverTranscript, VerifierTranscript};
 use binius_verifier::{
     config::{B1, B128, StdChallenger},
     fri::FRIParams,
     hash::{StdCompression, StdDigest},
+    merkle_tree::MerkleTreeScheme,
     pcs::verify,
 };
 use itertools::Itertools;
-use rand::{RngCore, SeedableRng, rngs::StdRng};
-use std::iter::repeat_with;
+use rand::{SeedableRng, rngs::StdRng};
+use std::{iter::repeat_with, marker::PhantomData};
 
-pub struct FriVeil<P>
+pub struct FriVeil<'a, P, VCS, NTT>
 where
+    NTT: AdditiveNTT<Field = B128> + Sync,
     P: PackedField<Scalar = B128> + PackedExtension<B128> + PackedExtension<B1>,
+    VCS: MerkleTreeScheme<P::Scalar>,
 {
+    _ntt: PhantomData<&'a NTT>,
     merkle_prover:
         BinaryMerkleTreeProver<P::Scalar, StdDigest, ParallelCompressionAdaptor<StdCompression>>,
     log_inv_rate: usize,
     num_test_queries: usize,
     n_vars: usize,
-    log_scalar_bit_width: usize,
+
+    _vcs: PhantomData<VCS>,
 }
 
-impl<P> FriVeil<P>
+impl<'a, P, VCS, NTT> FriVeil<'a, P, VCS, NTT>
 where
     P: PackedField<Scalar = B128> + PackedExtension<B128> + PackedExtension<B1>,
+    VCS: MerkleTreeScheme<P::Scalar>,
+    NTT: AdditiveNTT<Field = B128> + Sync,
 {
-    pub fn new(
-        log_inv_rate: usize,
-        num_test_queries: usize,
-        n_vars: usize,
-        log_scalar_bit_width: usize,
-    ) -> Self {
+    pub fn new(log_inv_rate: usize, num_test_queries: usize, n_vars: usize) -> Self {
         Self {
             merkle_prover: BinaryMerkleTreeProver::<P::Scalar, StdDigest, _>::new(
                 ParallelCompressionAdaptor::new(StdCompression::default()),
@@ -52,7 +56,8 @@ where
             log_inv_rate,
             num_test_queries,
             n_vars,
-            log_scalar_bit_width,
+            _ntt: PhantomData,
+            _vcs: PhantomData,
         }
     }
 
@@ -63,7 +68,14 @@ where
     pub fn initialize_fri_context(
         &self,
         values: &[P::Scalar],
-    ) -> Result<(FieldBuffer<P>, ReedSolomonCode<B128>, FRIParams<P::Scalar>), String> {
+    ) -> Result<
+        (
+            FieldBuffer<P>,
+            FRIParams<P::Scalar>,
+            NeighborsLastSingleThread<GenericPreExpanded<P::Scalar>>,
+        ),
+        String,
+    > {
         let packed_buffer = self.get_packed_buffer(values);
 
         let committed_rs_code =
@@ -85,7 +97,12 @@ where
         )
         .map_err(|e| e.to_string())?;
 
-        Ok((packed_buffer, committed_rs_code, fri_params))
+        let subspace = BinarySubspace::with_dim(fri_params.rs_code().log_len()).unwrap();
+
+        let domain_context = domain_context::GenericPreExpanded::generate_from_subspace(&subspace);
+        let ntt = NeighborsLastSingleThread::new(domain_context);
+
+        Ok((packed_buffer, fri_params, ntt))
     }
 
     pub fn calculate_evaluation_context(
@@ -110,26 +127,51 @@ where
         Ok((evaluation_point, evaluation_claim))
     }
 
-    pub fn prove(
+    pub fn commit(
         &self,
-        message: &[P::Scalar],
-        evaluation_point: &[P::Scalar],
+        packed_mle: FieldBuffer<P>,
+        fri_params: FRIParams<P::Scalar>,
+        ntt: &NeighborsLastSingleThread<GenericPreExpanded<P::Scalar>>,
     ) -> Result<
-        (
-            VerifierTranscript<StdChallenger>,
-            ReedSolomonCode<P::Scalar>,
-            FRIParams<P::Scalar>,
-        ),
+        CommitOutput<
+            P,
+            Vec<u8>,
+            <BinaryMerkleTreeProver<
+                P::Scalar,
+                StdDigest,
+                ParallelCompressionAdaptor<StdCompression>,
+            > as MerkleTreeProver<P::Scalar>>::Committed,
+        >,
         String,
     > {
-        let (packed_mle, committed_rs_code, fri_params) = self.initialize_fri_context(message)?;
-        let subspace = BinarySubspace::with_dim(fri_params.rs_code().log_len()).unwrap();
-        let domain_context = domain_context::GenericPreExpanded::generate_from_subspace(&subspace);
-        let ntt = NeighborsLastSingleThread::new(domain_context);
+        let pcs = OneBitPCSProver::new(ntt, &self.merkle_prover, &fri_params);
+        let commit_output = pcs.commit(packed_mle.clone()).map_err(|e| e.to_string())?;
 
-        let pcs = OneBitPCSProver::new(&ntt, &self.merkle_prover, &fri_params);
+        // Convert the digest type
+        Ok(CommitOutput {
+            codeword: commit_output.codeword,
+            commitment: commit_output.commitment.to_vec(),
+            committed: commit_output.committed,
+        })
+    }
 
-        let commit_output = pcs.commit(packed_mle.clone()).unwrap();
+    pub fn prove(
+        &self,
+        packed_mle: FieldBuffer<P>,
+        fri_params: FRIParams<P::Scalar>,
+        ntt: &NeighborsLastSingleThread<GenericPreExpanded<P::Scalar>>,
+        commit_output: &CommitOutput<
+            P,
+            Vec<u8>,
+            <BinaryMerkleTreeProver<
+                P::Scalar,
+                StdDigest,
+                ParallelCompressionAdaptor<StdCompression>,
+            > as MerkleTreeProver<P::Scalar>>::Committed,
+        >,
+        evaluation_point: &[P::Scalar],
+    ) -> Result<(VerifierTranscript<StdChallenger>, FRIParams<P::Scalar>), String> {
+        let pcs = OneBitPCSProver::new(ntt, &self.merkle_prover, &fri_params);
 
         let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
 
@@ -144,11 +186,7 @@ where
         )
         .map_err(|e| e.to_string())?;
 
-        Ok((
-            prover_transcript.into_verifier(),
-            committed_rs_code,
-            fri_params,
-        ))
+        Ok((prover_transcript.into_verifier(), fri_params))
     }
 
     pub fn verify_and_open(
@@ -173,6 +211,16 @@ where
             &merkle_prover_scheme,
         )
         .map_err(|e| e.to_string())
+    }
+
+    pub fn extract_commitment(
+        &self,
+        verifier_transcript: &mut VerifierTranscript<StdChallenger>,
+    ) -> Result<Vec<u8>, String> {
+        verifier_transcript
+            .message()
+            .read()
+            .map_err(|e| e.to_string())
     }
 
     pub fn lift_small_to_large_field<F, FE>(&self, small_field_elms: &[F]) -> Vec<FE>
