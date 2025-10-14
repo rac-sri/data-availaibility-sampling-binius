@@ -36,7 +36,7 @@ fn main() {
     println!("friveil initialized ({} ms)", start.elapsed().as_millis());
 
     let start = Instant::now();
-    let evaluation_point = friveil.calculate_evaluation_point().unwrap();
+    let evaluation_point = friveil.calculate_evaluation_point_with_position(3).unwrap();
 
     println!("evaluation point len - {:?}", evaluation_point.len());
     println!(

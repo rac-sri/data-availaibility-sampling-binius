@@ -110,10 +110,33 @@ where
         Ok((packed_buffer, fri_params, ntt))
     }
 
-    pub fn calculate_evaluation_point(&self) -> Result<(Vec<P::Scalar>), String> {
+    pub fn calculate_evaluation_point_random(&self) -> Result<(Vec<P::Scalar>), String> {
         let evaluation_point = self.random_scalars::<P::Scalar>(self.n_vars);
 
         Ok(evaluation_point.clone())
+    }
+
+    pub fn calculate_evaluation_point_with_position(
+        &self,
+        position: usize,
+    ) -> Result<(Vec<P::Scalar>), String> {
+        if position >= (1 << self.n_vars) {
+            return Err("Position out of bounds".to_string());
+        }
+
+        let mut evaluation_point = Vec::<P::Scalar>::with_capacity(self.n_vars);
+
+        for i in 0..self.n_vars {
+            let bit = (position >> i) & 1;
+            let field_element = if bit == 1 {
+                P::Scalar::one()
+            } else {
+                P::Scalar::zero()
+            };
+            evaluation_point.push(field_element);
+        }
+
+        Ok(evaluation_point)
     }
 
     pub fn calculate_evaluation_claim(
