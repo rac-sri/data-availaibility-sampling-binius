@@ -68,10 +68,6 @@ where
         }
     }
 
-    fn get_packed_buffer(&self, values: &[P::Scalar]) -> FieldBuffer<P> {
-        FieldBuffer::<P>::from_values(values).unwrap()
-    }
-
     pub fn initialize_fri_context(
         &self,
         packed_buffer: FieldBuffer<P>,

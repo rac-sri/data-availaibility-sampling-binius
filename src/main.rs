@@ -8,7 +8,7 @@ use binius_verifier::{
 use rand::RngCore;
 use std::iter::repeat_with;
 
-use crate::{friveil::FriVeil, poly::bytes_to_packed_mle};
+use crate::{friveil::FriVeil, poly::FriVeilUtils};
 
 mod poly;
 
@@ -20,12 +20,13 @@ fn main() {
     use std::time::Instant;
 
     const LOG_INV_RATE: usize = 1;
-    const NUM_TEST_QUERIES: usize = 3;
+    const NUM_TEST_QUERIES: usize = 3;;
 
-    let random_data_bytes = [0u8; 32 * 1024]; // 32 KB of zero bytes
+    let random_data_bytes = vec![0u8; 12 * 1024 * 1024];
 
-    let (packed_mle_values, packed_mle_values_vec, n_vars) =
-        bytes_to_packed_mle::<B128>(&random_data_bytes).unwrap();
+    let (packed_mle_values, packed_mle_values_vec, n_vars) = FriVeilUtils::<B128>::new()
+        .bytes_to_packed_mle(&random_data_bytes)
+        .unwrap();
 
     let start = Instant::now();
     let friveil = FriVeil::<
