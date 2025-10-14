@@ -1,8 +1,9 @@
-use std::marker::PhantomData;
-
 use binius_field::{ExtensionField, PackedField};
 use binius_math::FieldBuffer;
 use binius_verifier::config::B1;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+use std::marker::PhantomData;
 
 const BYTES_PER_ELEMENT: usize = 16; // 128 bit = 16 bytes
 
@@ -36,14 +37,28 @@ where
             padded_size >> self.log_scalar_bit_width
         };
 
-        let mut packed_values = Vec::<P::Scalar>::with_capacity(packed_size);
+        #[cfg(feature = "parallel")]
+        let mut packed_values: Vec<P::Scalar> = {
+            data.par_chunks(BYTES_PER_ELEMENT)
+                .map(|chunk| {
+                    let mut bytes_array = [0u8; 16];
+                    bytes_array[..chunk.len()].copy_from_slice(chunk);
+                    P::Scalar::from(u128::from_le_bytes(bytes_array))
+                })
+                .collect()
+        };
 
-        for chunk in data.chunks(BYTES_PER_ELEMENT) {
-            let mut bytes_array = [0u8; 16];
-            bytes_array[..chunk.len()].copy_from_slice(chunk);
-            let scalar = P::Scalar::from(u128::from_le_bytes(bytes_array));
-            packed_values.push(scalar);
-        }
+        #[cfg(not(feature = "parallel"))]
+        let mut packed_values: Vec<P::Scalar> = {
+            let mut values = Vec::with_capacity(num_elements);
+            for chunk in data.chunks(BYTES_PER_ELEMENT) {
+                let mut bytes_array = [0u8; 16];
+                bytes_array[..chunk.len()].copy_from_slice(chunk);
+                let scalar = P::Scalar::from(u128::from_le_bytes(bytes_array));
+                values.push(scalar);
+            }
+            values
+        };
 
         packed_values.resize(packed_size, P::Scalar::zero());
         let packed_mle =

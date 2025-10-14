@@ -20,13 +20,19 @@ fn main() {
     use std::time::Instant;
 
     const LOG_INV_RATE: usize = 1;
-    const NUM_TEST_QUERIES: usize = 3;;
+    const NUM_TEST_QUERIES: usize = 3;
 
-    let random_data_bytes = vec![0u8; 12 * 1024 * 1024];
+    // Create arbitrary (nonzero, patterned) data instead of all zeroes.
+    let random_data_bytes: Vec<u8> = (0..16 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
 
+    let start = Instant::now();
     let (packed_mle_values, packed_mle_values_vec, n_vars) = FriVeilUtils::<B128>::new()
         .bytes_to_packed_mle(&random_data_bytes)
         .unwrap();
+    println!(
+        "packed mle values generated ({} ms)",
+        start.elapsed().as_millis()
+    );
 
     let start = Instant::now();
     let friveil = FriVeil::<

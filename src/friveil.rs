@@ -26,6 +26,8 @@ use itertools::Itertools;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{iter::repeat_with, marker::PhantomData};
 
+use tracing::{debug, info};
+
 pub struct FriVeil<'a, P, VCS, NTT>
 where
     NTT: AdditiveNTT<Field = B128> + Sync,

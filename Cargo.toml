@@ -15,3 +15,9 @@ rand = { version = "0.9.1", default-features = false, features = [
     "std_rng",
 ] }
 itertools = "0.14.0"
+tracing = "0.1.41"
+rayon = {version = "1.8", optional = true}
+
+[features]
+default = []
+parallel = ["rayon"]
