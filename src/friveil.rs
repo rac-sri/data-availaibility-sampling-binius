@@ -4,7 +4,7 @@ use binius_math::{
     inner_product::inner_product,
     multilinear::eq::eq_ind_partial_eval,
     ntt::{
-        AdditiveNTT, NeighborsLastSingleThread,
+        AdditiveNTT, NeighborsLastMultiThread,
         domain_context::{self, GenericPreExpanded},
     },
 };
@@ -38,6 +38,7 @@ where
     log_inv_rate: usize,
     num_test_queries: usize,
     n_vars: usize,
+    log_num_shares: usize,
 
     _vcs: PhantomData<VCS>,
 }
@@ -48,7 +49,12 @@ where
     VCS: MerkleTreeScheme<P::Scalar>,
     NTT: AdditiveNTT<Field = B128> + Sync,
 {
-    pub fn new(log_inv_rate: usize, num_test_queries: usize, n_vars: usize) -> Self {
+    pub fn new(
+        log_inv_rate: usize,
+        num_test_queries: usize,
+        n_vars: usize,
+        log_num_shares: usize,
+    ) -> Self {
         Self {
             merkle_prover: BinaryMerkleTreeProver::<P::Scalar, StdDigest, _>::new(
                 ParallelCompressionAdaptor::new(StdCompression::default()),
@@ -56,6 +62,7 @@ where
             log_inv_rate,
             num_test_queries,
             n_vars,
+            log_num_shares,
             _ntt: PhantomData,
             _vcs: PhantomData,
         }
@@ -67,17 +74,15 @@ where
 
     pub fn initialize_fri_context(
         &self,
-        values: &[P::Scalar],
+        packed_buffer: FieldBuffer<P>,
     ) -> Result<
         (
             FieldBuffer<P>,
             FRIParams<P::Scalar>,
-            NeighborsLastSingleThread<GenericPreExpanded<P::Scalar>>,
+            NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
         ),
         String,
     > {
-        let packed_buffer = self.get_packed_buffer(values);
-
         let committed_rs_code =
             ReedSolomonCode::<B128>::new(packed_buffer.log_len(), self.log_inv_rate).unwrap();
 
@@ -100,21 +105,25 @@ where
         let subspace = BinarySubspace::with_dim(fri_params.rs_code().log_len()).unwrap();
 
         let domain_context = domain_context::GenericPreExpanded::generate_from_subspace(&subspace);
-        let ntt = NeighborsLastSingleThread::new(domain_context);
+        let ntt = NeighborsLastMultiThread::new(domain_context, self.log_num_shares);
 
         Ok((packed_buffer, fri_params, ntt))
     }
 
-    pub fn calculate_evaluation_context(
+    pub fn calculate_evaluation_point(&self) -> Result<(Vec<P::Scalar>), String> {
+        let evaluation_point = self.random_scalars::<P::Scalar>(self.n_vars);
+
+        Ok(evaluation_point.clone())
+    }
+
+    pub fn calculate_evaluation_claim(
         &self,
         values: &[P::Scalar],
-    ) -> Result<(Vec<P::Scalar>, P::Scalar), String> {
+        evaluation_point: &[P::Scalar],
+    ) -> Result<P::Scalar, String> {
         let lifted_small_field_mle = self.lift_small_to_large_field::<B1, P::Scalar>(
             &self.large_field_mle_to_small_field_mle::<B1, P::Scalar>(&values),
         );
-
-        let evaluation_point = self.random_scalars::<P::Scalar>(self.n_vars);
-
         let evaluation_claim = inner_product::<P::Scalar>(
             lifted_small_field_mle,
             eq_ind_partial_eval(&evaluation_point)
@@ -124,14 +133,14 @@ where
                 .collect_vec(),
         );
 
-        Ok((evaluation_point, evaluation_claim))
+        Ok(evaluation_claim)
     }
 
     pub fn commit(
         &self,
         packed_mle: FieldBuffer<P>,
         fri_params: FRIParams<P::Scalar>,
-        ntt: &NeighborsLastSingleThread<GenericPreExpanded<P::Scalar>>,
+        ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
     ) -> Result<
         CommitOutput<
             P,
@@ -159,7 +168,7 @@ where
         &self,
         packed_mle: FieldBuffer<P>,
         fri_params: FRIParams<P::Scalar>,
-        ntt: &NeighborsLastSingleThread<GenericPreExpanded<P::Scalar>>,
+        ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
         commit_output: &CommitOutput<
             P,
             Vec<u8>,

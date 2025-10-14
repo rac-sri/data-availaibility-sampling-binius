@@ -1,63 +1,67 @@
-use binius_field::{ExtensionField, Field, PackedField};
-use binius_math::{
-    BinarySubspace, FieldBuffer, ReedSolomonCode,
-    inner_product::inner_product,
-    multilinear::eq::eq_ind_partial_eval,
-    ntt::{
-        NeighborsLastSingleThread,
-        domain_context::{self, GenericPreExpanded},
-    },
-};
-use binius_prover::{
-    hash::parallel_compression::ParallelCompressionAdaptor,
-    merkle_tree::prover::BinaryMerkleTreeProver, pcs::OneBitPCSProver,
-};
-use binius_transcript::ProverTranscript;
+use binius_field::{ExtensionField, Field};
+use binius_math::ntt::{NeighborsLastMultiThread, domain_context::GenericPreExpanded};
 use binius_verifier::{
-    config::{B1, B128, StdChallenger},
-    fri::FRIParams,
+    config::{B1, B128},
     hash::{StdCompression, StdDigest},
     merkle_tree::BinaryMerkleTreeScheme,
-    pcs::verify,
 };
-use itertools::Itertools;
-use rand::{RngCore, SeedableRng, rngs::StdRng};
+use rand::RngCore;
 use std::iter::repeat_with;
 
-use crate::friveil::FriVeil;
+use crate::{friveil::FriVeil, poly::bytes_to_packed_mle};
+
+mod poly;
 
 mod friveil;
 
 fn main() {
     //this should be the base-2 logarithm of the number of cores.
-    const LOG_SIZE_CORES: usize = 3;
+
+    use std::time::Instant;
+
     const LOG_INV_RATE: usize = 1;
     const NUM_TEST_QUERIES: usize = 3;
 
-    type P = B128;
+    let random_data_bytes = [0u8; 32 * 1024]; // 32 KB of zero bytes
 
-    let n_vars = 12;
-    let log_scalar_bit_width = <B128 as ExtensionField<B1>>::LOG_DEGREE;
-    let big_field_n_vars = n_vars - log_scalar_bit_width;
+    let (packed_mle_values, packed_mle_values_vec, n_vars) =
+        bytes_to_packed_mle::<B128>(&random_data_bytes).unwrap();
 
-    let mut rng = StdRng::from_seed([0; 32]);
-
-    let packed_mle_values = random_scalars::<B128>(&mut rng, 1 << big_field_n_vars);
-
+    let start = Instant::now();
     let friveil = FriVeil::<
         B128,
         BinaryMerkleTreeScheme<B128, StdDigest, StdCompression>,
-        NeighborsLastSingleThread<GenericPreExpanded<B128>>,
-    >::new(LOG_INV_RATE, NUM_TEST_QUERIES, n_vars);
-    let (evaluation_point, evaluation_claim) = friveil
-        .calculate_evaluation_context(&packed_mle_values)
-        .unwrap();
-    let (packed_mle, fri_params, ntt) = friveil.initialize_fri_context(&packed_mle_values).unwrap();
+        NeighborsLastMultiThread<GenericPreExpanded<B128>>,
+    >::new(LOG_INV_RATE, NUM_TEST_QUERIES, n_vars, 3);
+    println!("friveil initialized ({} ms)", start.elapsed().as_millis());
 
+    let start = Instant::now();
+    let evaluation_point = friveil.calculate_evaluation_point().unwrap();
+
+    println!("evaluation point len - {:?}", evaluation_point.len());
+    println!(
+        "evaluation context calculated ({} ms)",
+        start.elapsed().as_millis()
+    );
+
+    let start = Instant::now();
+    let (packed_mle, fri_params, ntt) = friveil.initialize_fri_context(packed_mle_values).unwrap();
+    println!(
+        "fri context initialized ({} ms)",
+        start.elapsed().as_millis()
+    );
+
+    let start = Instant::now();
     let commit_output = friveil
         .commit(packed_mle.clone(), fri_params.clone(), &ntt)
         .unwrap();
+    println!(
+        "commit output generated ({} ms) of size {}",
+        start.elapsed().as_millis(),
+        commit_output.commitment.len(),
+    );
 
+    let start = Instant::now();
     let (mut verifier_transcript) = friveil
         .prove(
             packed_mle,
@@ -67,15 +71,35 @@ fn main() {
             &evaluation_point,
         )
         .unwrap();
+    println!("proof generated ({} ms)", start.elapsed().as_millis());
 
+    let start = Instant::now();
+    let evaluation_claim = friveil
+        .calculate_evaluation_claim(&packed_mle_values_vec, &evaluation_point)
+        .unwrap();
+    println!(
+        "evaluation claim generated ({} ms)",
+        start.elapsed().as_millis()
+    );
+
+    let start = Instant::now();
     let result = friveil.verify_and_open(
         &mut verifier_transcript,
         evaluation_claim,
         &evaluation_point,
         &fri_params,
     );
+    println!(
+        "verification and opening complete ({} ms)",
+        start.elapsed().as_millis()
+    );
 
+    let start = Instant::now();
     println!("result: {:?}", result);
+    println!(
+        "result logging complete ({} ms)",
+        start.elapsed().as_millis()
+    );
 }
 
 pub fn random_scalars<F: Field>(mut rng: impl RngCore, n: usize) -> Vec<F> {
@@ -100,3 +124,27 @@ where
         .flat_map(|elm| ExtensionField::<F>::iter_bases(elm))
         .collect()
 }
+
+// multi thread log inv = 3
+// packed mle values generated (1905 ms)
+// friveil initialized (0 ms)
+// evaluation context calculated (0 ms)
+// fri context initialized (277 ms)
+// commit output generated (7831 ms)
+// proof generated (7750 ms)
+// evaluation claim generated (154951 ms)
+// verification and opening complete (8 ms)
+// result: Ok(())
+// result logging complete (0 ms)
+
+// single thread
+// packed mle values generated (1911 ms)
+// friveil initialized (0 ms)
+// evaluation context calculated (0 ms)
+// fri context initialized (278 ms)
+// commit output generated (26202 ms)
+// proof generated (8064 ms)
+// evaluation claim generated (152558 ms)
+// verification and opening complete (8 ms)
+// result: Ok(())
+// result logging complete (0 ms)
