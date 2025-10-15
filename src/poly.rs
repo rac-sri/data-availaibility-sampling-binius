@@ -13,6 +13,16 @@ pub struct FriVeilUtils<P> {
     _p: PhantomData<P>,
 }
 
+pub struct PackedMLE<P>
+where
+    P: PackedField + ExtensionField<B1>,
+    P::Scalar: From<u128> + ExtensionField<B1>,
+{
+    pub packed_mle: FieldBuffer<P>,
+    pub packed_values: Vec<P::Scalar>,
+    pub total_n_vars: usize,
+}
+
 impl<P> FriVeilUtils<P>
 where
     P: PackedField + ExtensionField<B1>,
@@ -25,16 +35,21 @@ where
         }
     }
 
-    pub fn bytes_to_packed_mle(
-        &self,
-        data: &[u8],
-    ) -> Result<(FieldBuffer<P>, Vec<P::Scalar>, usize), String> {
+    pub fn bytes_to_packed_mle(&self, data: &[u8]) -> Result<PackedMLE<P>, String> {
         let num_elements = data.len().div_ceil(BYTES_PER_ELEMENT);
         let padded_size = num_elements.next_power_of_two();
 
         let n_vars = padded_size.ilog2() as usize;
         debug!("N vars: {:?}", n_vars);
-        let big_field_n_vars = n_vars - self.log_scalar_bit_width;
+        let big_field_n_vars = n_vars
+            .checked_sub(self.log_scalar_bit_width)
+            .or_else(|| Some(self.log_scalar_bit_width))
+            .ok_or_else(|| {
+                format!(
+                    "n_vars ({}) is less than log_scalar_bit_width ({})",
+                    n_vars, self.log_scalar_bit_width
+                )
+            })?;
         let packed_size = 1 << big_field_n_vars;
         debug!("Packed size: {:?}", packed_size);
 
@@ -72,6 +87,10 @@ where
         let big_field_n_vars = packed_mle.log_len();
         let total_n_vars = big_field_n_vars + self.log_scalar_bit_width;
 
-        Ok((packed_mle, packed_values, total_n_vars))
+        Ok(PackedMLE::<P> {
+            packed_mle,
+            packed_values,
+            total_n_vars,
+        })
     }
 }

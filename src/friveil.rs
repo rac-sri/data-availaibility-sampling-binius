@@ -26,8 +26,6 @@ use itertools::Itertools;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{iter::repeat_with, marker::PhantomData};
 
-use tracing::{debug, info};
-
 pub struct FriVeil<'a, P, VCS, NTT>
 where
     NTT: AdditiveNTT<Field = B128> + Sync,
@@ -35,7 +33,7 @@ where
     VCS: MerkleTreeScheme<P::Scalar>,
 {
     _ntt: PhantomData<&'a NTT>,
-    merkle_prover:
+    pub merkle_prover:
         BinaryMerkleTreeProver<P::Scalar, StdDigest, ParallelCompressionAdaptor<StdCompression>>,
     log_inv_rate: usize,
     num_test_queries: usize,
@@ -75,7 +73,6 @@ where
         packed_buffer: FieldBuffer<P>,
     ) -> Result<
         (
-            FieldBuffer<P>,
             FRIParams<P::Scalar>,
             NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
         ),
@@ -105,36 +102,13 @@ where
         let domain_context = domain_context::GenericPreExpanded::generate_from_subspace(&subspace);
         let ntt = NeighborsLastMultiThread::new(domain_context, self.log_num_shares);
 
-        Ok((packed_buffer, fri_params, ntt))
+        Ok((fri_params, ntt))
     }
 
     pub fn calculate_evaluation_point_random(&self) -> Result<(Vec<P::Scalar>), String> {
         let evaluation_point = self.random_scalars::<P::Scalar>(self.n_vars);
 
         Ok(evaluation_point.clone())
-    }
-
-    pub fn calculate_evaluation_point_with_position(
-        &self,
-        position: usize,
-    ) -> Result<(Vec<P::Scalar>), String> {
-        if position >= (1 << self.n_vars) {
-            return Err("Position out of bounds".to_string());
-        }
-
-        let mut evaluation_point = Vec::<P::Scalar>::with_capacity(self.n_vars);
-
-        for i in 0..self.n_vars {
-            let bit = (position >> i) & 1;
-            let field_element = if bit == 1 {
-                P::Scalar::one()
-            } else {
-                P::Scalar::zero()
-            };
-            evaluation_point.push(field_element);
-        }
-
-        Ok(evaluation_point)
     }
 
     pub fn calculate_evaluation_claim(
@@ -244,6 +218,51 @@ where
             &merkle_prover_scheme,
         )
         .map_err(|e| e.to_string())
+    }
+
+    pub fn inclusion_proof(
+        &self,
+        committed: &<BinaryMerkleTreeProver<
+            P::Scalar,
+            StdDigest,
+            ParallelCompressionAdaptor<StdCompression>,
+        > as MerkleTreeProver<P::Scalar>>::Committed,
+        index: usize,
+    ) -> Result<VerifierTranscript<StdChallenger>, String> {
+        let mut proof_writer = ProverTranscript::new(StdChallenger::default());
+        self.merkle_prover
+            .prove_opening(&committed, 0, index, &mut proof_writer.message())
+            .map_err(|e| e.to_string())?;
+
+        let proof_reader = proof_writer.into_verifier();
+
+        Ok(proof_reader)
+    }
+
+    pub fn verify_inclusion_proof(
+        &self,
+        verifier_transcript: &mut VerifierTranscript<StdChallenger>,
+        data: &[P::Scalar],
+        index: usize,
+        fri_params: &FRIParams<P::Scalar>,
+        committed: &<BinaryMerkleTreeProver<
+            P::Scalar,
+            StdDigest,
+            ParallelCompressionAdaptor<StdCompression>,
+        > as MerkleTreeProver<P::Scalar>>::Committed,
+    ) -> Result<(), String> {
+        let tree_depth = fri_params.rs_code().log_len();
+        self.merkle_prover
+            .scheme()
+            .verify_opening(
+                index,
+                &data,
+                0,
+                tree_depth,
+                &[committed.root()],
+                &mut verifier_transcript.message(),
+            )
+            .map_err(|e| e.to_string())
     }
 
     pub fn extract_commitment(
