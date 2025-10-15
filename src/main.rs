@@ -1,5 +1,6 @@
 use crate::{friveil::FriVeilDefault, poly::FriVeilUtils};
 
+use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 use std::time::Instant;
 use tracing::{Level, debug, error, info, span, warn};
 
@@ -133,7 +134,7 @@ fn main() {
     );
     drop(_span);
 
-    let _span = span!(Level::INFO, "codeword_encoding").entered();
+    // let _span = span!(Level::INFO, "codeword_encoding").entered();
     // info!("🔄 Phase 5: Encoding codeword");
     // let start = Instant::now();
     // let encoded_codeword = friveil
@@ -157,16 +158,20 @@ fn main() {
 
     let mut successful_samples = 0;
     let mut failed_samples = Vec::new();
-    let total_samples = commit_output.codeword.len();
 
-    for (i, value) in commit_output.codeword.iter().enumerate() {
+    let total_samples = commit_output.codeword.len();
+    let sample_size = total_samples / 2;
+    let indices = sample(&mut StdRng::from_seed([0; 32]), total_samples, sample_size).into_vec();
+
+    for (k, &i) in indices.iter().enumerate() {
         let sample_span = span!(Level::DEBUG, "sample_verification", index = i).entered();
 
         match friveil.inclusion_proof(&commit_output.committed, i) {
             Ok(mut inclusion_proof) => {
+                let value = commit_output.codeword[i];
                 match friveil.verify_inclusion_proof(
                     &mut inclusion_proof,
-                    &[*value],
+                    &[value],
                     i,
                     &fri_params,
                     &commit_output.committed,

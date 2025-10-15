@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 use tracing::debug;
 
 const BYTES_PER_ELEMENT: usize = 16; // 128 bit = 16 bytes
+const BITS_PER_ELEMENT: usize = 128;
 
 pub struct FriVeilUtils<P> {
     log_scalar_bit_width: usize,
@@ -36,14 +37,12 @@ where
     }
 
     pub fn bytes_to_packed_mle(&self, data: &[u8]) -> Result<PackedMLE<P>, String> {
-        let num_elements = data.len().div_ceil(BYTES_PER_ELEMENT);
+        let num_elements = data.len().div_ceil(BITS_PER_ELEMENT);
         let padded_size = num_elements.next_power_of_two();
 
-        let n_vars = padded_size.ilog2() as usize;
-        debug!("N vars: {:?}", n_vars);
-        let big_field_n_vars = n_vars
-            .saturating_sub(self.log_scalar_bit_width)
-            .max(self.log_scalar_bit_width);
+        let big_field_n_vars = padded_size.ilog2() as usize;
+        debug!("N vars: {:?}", big_field_n_vars);
+
         let packed_size = 1 << big_field_n_vars;
         debug!("Packed size: {:?}", packed_size);
 
@@ -62,7 +61,7 @@ where
         let mut packed_values: Vec<P::Scalar> = {
             let mut values = Vec::with_capacity(num_elements);
             for chunk in data.chunks(BYTES_PER_ELEMENT) {
-                let mut bytes_array = [0u8; 16];
+                let mut bytes_array = [0u8; BYTES_PER_ELEMENT];
                 bytes_array[..chunk.len()].copy_from_slice(chunk);
                 let scalar = P::Scalar::from(u128::from_le_bytes(bytes_array));
                 values.push(scalar);
