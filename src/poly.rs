@@ -4,6 +4,7 @@ use binius_verifier::config::B1;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::marker::PhantomData;
+use tracing::debug;
 
 const BYTES_PER_ELEMENT: usize = 16; // 128 bit = 16 bytes
 
@@ -31,11 +32,11 @@ where
         let num_elements = data.len().div_ceil(BYTES_PER_ELEMENT);
         let padded_size = num_elements.next_power_of_two();
 
-        let packed_size = if padded_size >> self.log_scalar_bit_width == 0 {
-            1
-        } else {
-            padded_size >> self.log_scalar_bit_width
-        };
+        let n_vars = padded_size.ilog2() as usize;
+        debug!("N vars: {:?}", n_vars);
+        let big_field_n_vars = n_vars - self.log_scalar_bit_width;
+        let packed_size = 1 << big_field_n_vars;
+        debug!("Packed size: {:?}", packed_size);
 
         #[cfg(feature = "parallel")]
         let mut packed_values: Vec<P::Scalar> = {
@@ -60,7 +61,11 @@ where
             values
         };
 
+        debug!("Packed values: {:?}", packed_values.len());
         packed_values.resize(packed_size, P::Scalar::zero());
+
+        debug!("Packed values: {:?}", packed_values.len());
+
         let packed_mle =
             FieldBuffer::<P>::from_values(packed_values.as_slice()).map_err(|e| e.to_string())?;
 

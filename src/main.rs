@@ -1,3 +1,4 @@
+use crate::{friveil::FriVeil, poly::FriVeilUtils};
 use binius_field::{ExtensionField, Field};
 use binius_math::ntt::{NeighborsLastMultiThread, domain_context::GenericPreExpanded};
 use binius_verifier::{
@@ -5,70 +6,74 @@ use binius_verifier::{
     hash::{StdCompression, StdDigest},
     merkle_tree::BinaryMerkleTreeScheme,
 };
-use rand::RngCore;
+use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::iter::repeat_with;
-
-use crate::{friveil::FriVeil, poly::FriVeilUtils};
-
-mod poly;
+use std::time::Instant;
+use tracing::{debug, error, info, warn};
 
 mod friveil;
+mod poly;
 
 fn main() {
     //this should be the base-2 logarithm of the number of cores.
 
-    use std::time::Instant;
+    tracing_subscriber::fmt::init();
 
     const LOG_INV_RATE: usize = 1;
     const NUM_TEST_QUERIES: usize = 3;
 
     // Create arbitrary (nonzero, patterned) data instead of all zeroes.
-    let random_data_bytes: Vec<u8> = (0..16 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
+    info!("Generating random patterned input data...");
+    let random_data_bytes: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
 
     let start = Instant::now();
+    info!("Converting input bytes to packed MLE...");
     let (packed_mle_values, packed_mle_values_vec, n_vars) = FriVeilUtils::<B128>::new()
         .bytes_to_packed_mle(&random_data_bytes)
         .unwrap();
-    println!(
-        "packed mle values generated ({} ms)",
-        start.elapsed().as_millis()
+
+    info!("Packed MLE values: {:?}", packed_mle_values_vec.get(0..2));
+    info!(
+        "Packed MLE values generated in {} ms (n_vars = {})",
+        start.elapsed().as_millis(),
+        n_vars
     );
+    info!("Packed MLE values: {:?}", packed_mle_values_vec.len());
 
     let start = Instant::now();
+    info!("Initializing FRIVeil context...");
     let friveil = FriVeil::<
         B128,
         BinaryMerkleTreeScheme<B128, StdDigest, StdCompression>,
         NeighborsLastMultiThread<GenericPreExpanded<B128>>,
     >::new(LOG_INV_RATE, NUM_TEST_QUERIES, n_vars, 3);
-    println!("friveil initialized ({} ms)", start.elapsed().as_millis());
+    info!("FRIVeil initialized in {} ms", start.elapsed().as_millis());
 
     let start = Instant::now();
+    info!("Calculating evaluation point at position 3...");
     let evaluation_point = friveil.calculate_evaluation_point_with_position(3).unwrap();
 
-    println!("evaluation point len - {:?}", evaluation_point.len());
-    println!(
-        "evaluation context calculated ({} ms)",
+    info!("Evaluation point length: {}", evaluation_point.len());
+    info!(
+        "Evaluation context calculated in {} ms",
         start.elapsed().as_millis()
     );
 
-    let start = Instant::now();
     let (packed_mle, fri_params, ntt) = friveil.initialize_fri_context(packed_mle_values).unwrap();
-    println!(
-        "fri context initialized ({} ms)",
-        start.elapsed().as_millis()
-    );
 
     let start = Instant::now();
+    info!("Committing to MLE...");
     let commit_output = friveil
         .commit(packed_mle.clone(), fri_params.clone(), &ntt)
         .unwrap();
-    println!(
-        "commit output generated ({} ms) of size {}",
+    info!(
+        "Commit output generated in {} ms (commitment size: {})",
         start.elapsed().as_millis(),
         commit_output.commitment.len(),
     );
 
     let start = Instant::now();
+    info!("Generating proof...");
     let (mut verifier_transcript) = friveil
         .prove(
             packed_mle,
@@ -78,35 +83,37 @@ fn main() {
             &evaluation_point,
         )
         .unwrap();
-    println!("proof generated ({} ms)", start.elapsed().as_millis());
+    info!("Proof generated in {} ms", start.elapsed().as_millis());
 
     let start = Instant::now();
+    info!("Calculating evaluation claim...");
     let evaluation_claim = friveil
         .calculate_evaluation_claim(&packed_mle_values_vec, &evaluation_point)
         .unwrap();
-    println!(
-        "evaluation claim generated ({} ms)",
+    debug!("Evaluation claim: {:?}", evaluation_claim);
+    info!(
+        "Evaluation claim generated in {} ms",
         start.elapsed().as_millis()
     );
 
     let start = Instant::now();
+    info!("Running verification and opening...");
     let result = friveil.verify_and_open(
         &mut verifier_transcript,
         evaluation_claim,
         &evaluation_point,
         &fri_params,
     );
-    println!(
-        "verification and opening complete ({} ms)",
+    match &result {
+        Ok(_) => info!("Verification succeeded."),
+        Err(e) => error!("Verification failed: {:?}", e),
+    }
+    info!(
+        "Verification and opening complete in {} ms",
         start.elapsed().as_millis()
     );
 
-    let start = Instant::now();
-    println!("result: {:?}", result);
-    println!(
-        "result logging complete ({} ms)",
-        start.elapsed().as_millis()
-    );
+    info!("Final result: {:?}", result);
 }
 
 pub fn random_scalars<F: Field>(mut rng: impl RngCore, n: usize) -> Vec<F> {

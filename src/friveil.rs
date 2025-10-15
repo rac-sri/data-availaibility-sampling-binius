@@ -145,6 +145,7 @@ where
         let lifted_small_field_mle = self.lift_small_to_large_field::<B1, P::Scalar>(
             &self.large_field_mle_to_small_field_mle::<B1, P::Scalar>(&values),
         );
+
         let evaluation_claim = inner_product::<P::Scalar>(
             lifted_small_field_mle,
             eq_ind_partial_eval(&evaluation_point)
