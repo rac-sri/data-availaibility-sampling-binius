@@ -19,13 +19,19 @@ use binius_verifier::{
     config::{B1, B128, StdChallenger},
     fri::FRIParams,
     hash::{StdCompression, StdDigest},
-    merkle_tree::MerkleTreeScheme,
+    merkle_tree::{BinaryMerkleTreeScheme, MerkleTreeScheme},
     pcs::verify,
 };
 use itertools::Itertools;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{iter::repeat_with, marker::PhantomData};
 
+pub type FriVeilDefault = FriVeil<
+    'static,
+    B128,
+    BinaryMerkleTreeScheme<B128, StdDigest, StdCompression>,
+    NeighborsLastMultiThread<GenericPreExpanded<B128>>,
+>;
 pub struct FriVeil<'a, P, VCS, NTT>
 where
     NTT: AdditiveNTT<Field = B128> + Sync,
@@ -176,7 +182,7 @@ where
             > as MerkleTreeProver<P::Scalar>>::Committed,
         >,
         evaluation_point: &[P::Scalar],
-    ) -> Result<(VerifierTranscript<StdChallenger>), String> {
+    ) -> Result<VerifierTranscript<StdChallenger>, String> {
         let pcs = OneBitPCSProver::new(ntt, &self.merkle_prover, &fri_params);
 
         let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
@@ -194,7 +200,7 @@ where
         )
         .map_err(|e| e.to_string())?;
 
-        Ok((prover_transcript.into_verifier()))
+        Ok(prover_transcript.into_verifier())
     }
 
     pub fn verify_evaluation(
@@ -293,5 +299,289 @@ where
             .iter()
             .flat_map(|elm| ExtensionField::<F>::iter_bases(elm))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    use crate::poly::FriVeilUtils;
+    use binius_field::Field;
+    use binius_math::ntt::{NeighborsLastMultiThread, domain_context::GenericPreExpanded};
+    use binius_verifier::{
+        config::{B1, B128},
+        hash::{StdCompression, StdDigest},
+        merkle_tree::BinaryMerkleTreeScheme,
+    };
+
+    type TestFriVeil = FriVeil<
+        'static,
+        B128,
+        BinaryMerkleTreeScheme<B128, StdDigest, StdCompression>,
+        NeighborsLastMultiThread<GenericPreExpanded<B128>>,
+    >;
+
+    fn create_test_data(size_bytes: usize) -> Vec<u8> {
+        (0..size_bytes).map(|i| (i % 256) as u8).collect()
+    }
+
+    #[test]
+    fn test_friveil_new() {
+        const LOG_INV_RATE: usize = 1;
+        const NUM_TEST_QUERIES: usize = 3;
+        const N_VARS: usize = 10;
+        const LOG_NUM_SHARES: usize = 2;
+
+        let friveil = TestFriVeil::new(LOG_INV_RATE, NUM_TEST_QUERIES, N_VARS, LOG_NUM_SHARES);
+
+        assert_eq!(friveil.log_inv_rate, LOG_INV_RATE);
+        assert_eq!(friveil.num_test_queries, NUM_TEST_QUERIES);
+        assert_eq!(friveil.n_vars, N_VARS);
+        assert_eq!(friveil.log_num_shares, LOG_NUM_SHARES);
+    }
+
+    #[test]
+    fn test_calculate_evaluation_point_random() {
+        const N_VARS: usize = 8;
+        let friveil = TestFriVeil::new(1, 3, N_VARS, 2);
+
+        let result = friveil.calculate_evaluation_point_random();
+        assert!(result.is_ok());
+
+        let evaluation_point = result.unwrap();
+        assert_eq!(evaluation_point.len(), N_VARS);
+
+        // Test deterministic behavior with fixed seed
+        let result2 = friveil.calculate_evaluation_point_random();
+        assert!(result2.is_ok());
+        let evaluation_point2 = result2.unwrap();
+        assert_eq!(evaluation_point, evaluation_point2);
+    }
+
+    #[test]
+    fn test_field_conversion_methods() {
+        let friveil = TestFriVeil::new(1, 3, 8, 2);
+
+        // Test small to large field conversion
+        let small_field_values: Vec<B1> = vec![B1::ZERO, B1::ONE, B1::ZERO, B1::ONE];
+        let large_field_values: Vec<B128> = friveil.lift_small_to_large_field(&small_field_values);
+
+        assert_eq!(large_field_values.len(), small_field_values.len());
+        assert_eq!(large_field_values[0], B128::from(B1::ZERO));
+        assert_eq!(large_field_values[1], B128::from(B1::ONE));
+
+        // Test large to small field conversion
+        let test_large_values: Vec<B128> = vec![B128::from(42u128), B128::from(100u128)];
+        let converted_small: Vec<B1> =
+            friveil.large_field_mle_to_small_field_mle(&test_large_values);
+
+        // Each B128 should expand to 128 B1 elements
+        assert_eq!(converted_small.len(), test_large_values.len() * 128);
+    }
+
+    #[test]
+    fn test_initialize_fri_context() {
+        let friveil = TestFriVeil::new(1, 3, 12, 2);
+
+        // Create test data
+        let test_data = create_test_data(1024); // 1KB test data
+        let packed_mle_values = FriVeilUtils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let result = friveil.initialize_fri_context(packed_mle_values.packed_mle.clone());
+        assert!(result.is_ok());
+
+        let (fri_params, _ntt) = result.unwrap();
+
+        // Verify FRI parameters are reasonable
+        assert_eq!(fri_params.rs_code().log_inv_rate(), friveil.log_inv_rate);
+        assert_eq!(fri_params.n_test_queries(), friveil.num_test_queries);
+    }
+
+    #[test]
+    fn test_commit_and_inclusion_proofs() {
+        let friveil = TestFriVeil::new(1, 3, 12, 2);
+
+        // Create test data
+        let test_data = create_test_data(1024);
+        let packed_mle_values = FriVeilUtils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let (fri_params, ntt) = friveil
+            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .expect("Failed to initialize FRI context");
+
+        // Test commit
+        let commit_result = friveil.commit(
+            packed_mle_values.packed_mle.clone(),
+            fri_params.clone(),
+            &ntt,
+        );
+        assert!(commit_result.is_ok());
+
+        let commit_output = commit_result.unwrap();
+        assert!(!commit_output.commitment.is_empty());
+        assert!(!commit_output.codeword.is_empty());
+
+        // Test inclusion proofs for first few elements
+        for i in 0..std::cmp::min(5, commit_output.codeword.len()) {
+            let value = commit_output.codeword[i];
+
+            // Generate inclusion proof
+            let inclusion_proof_result = friveil.inclusion_proof(&commit_output.committed, i);
+            assert!(inclusion_proof_result.is_ok());
+
+            let mut inclusion_proof = inclusion_proof_result.unwrap();
+
+            // Verify inclusion proof
+            let verify_result = friveil.verify_inclusion_proof(
+                &mut inclusion_proof,
+                &[value],
+                i,
+                &fri_params,
+                &commit_output.committed,
+            );
+            assert!(
+                verify_result.is_ok(),
+                "Inclusion proof verification failed for index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_calculate_evaluation_claim() {
+        let test_data = create_test_data(1024 * 1024); // 1mb test data
+        let packed_mle_values = FriVeilUtils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
+
+        let evaluation_point = friveil
+            .calculate_evaluation_point_random()
+            .expect("Failed to generate evaluation point");
+
+        let result =
+            friveil.calculate_evaluation_claim(&packed_mle_values.packed_values, &evaluation_point);
+        assert!(result.is_ok());
+
+        let evaluation_claim = result.unwrap();
+        // The evaluation claim should be a valid field element
+        assert_ne!(evaluation_claim, B128::default()); // Should not be zero for random inputs
+    }
+
+    #[test]
+    fn test_full_prove_verify_workflow() {
+        // Create test data
+        let test_data = create_test_data(1024 * 1024); // 2KB test data
+        let packed_mle_values = FriVeilUtils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
+        // Initialize FRI context
+        let (fri_params, ntt) = friveil
+            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .expect("Failed to initialize FRI context");
+
+        // Generate evaluation point
+        let evaluation_point = friveil
+            .calculate_evaluation_point_random()
+            .expect("Failed to generate evaluation point");
+
+        // Commit to MLE
+        let commit_output = friveil
+            .commit(
+                packed_mle_values.packed_mle.clone(),
+                fri_params.clone(),
+                &ntt,
+            )
+            .expect("Failed to commit");
+
+        // Generate proof
+        let prove_result = friveil.prove(
+            packed_mle_values.packed_mle.clone(),
+            fri_params.clone(),
+            &ntt,
+            &commit_output,
+            &evaluation_point,
+        );
+        assert!(prove_result.is_ok());
+
+        let mut verifier_transcript = prove_result.unwrap();
+
+        // Calculate evaluation claim
+        let evaluation_claim = friveil
+            .calculate_evaluation_claim(&packed_mle_values.packed_values, &evaluation_point)
+            .expect("Failed to calculate evaluation claim");
+
+        // Verify proof
+        let verify_result = friveil.verify_evaluation(
+            &mut verifier_transcript,
+            evaluation_claim,
+            &evaluation_point,
+            &fri_params,
+        );
+        assert!(
+            verify_result.is_ok(),
+            "Verification failed: {:?}",
+            verify_result
+        );
+    }
+
+    #[test]
+    fn test_invalid_verification_fails() {
+        // Create test data
+        let test_data = create_test_data(512);
+        let packed_mle_values = FriVeilUtils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+        let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
+        let (fri_params, ntt) = friveil
+            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .expect("Failed to initialize FRI context");
+
+        let commit_output = friveil
+            .commit(
+                packed_mle_values.packed_mle.clone(),
+                fri_params.clone(),
+                &ntt,
+            )
+            .expect("Failed to commit");
+
+        let evaluation_point = friveil
+            .calculate_evaluation_point_random()
+            .expect("Failed to generate evaluation point");
+
+        let mut verifier_transcript = friveil
+            .prove(
+                packed_mle_values.packed_mle.clone(),
+                fri_params.clone(),
+                &ntt,
+                &commit_output,
+                &evaluation_point,
+            )
+            .expect("Failed to generate proof");
+
+        // Use wrong evaluation claim (should cause verification to fail)
+        let wrong_evaluation_claim = B128::from(42u128);
+
+        let verify_result = friveil.verify_evaluation(
+            &mut verifier_transcript,
+            wrong_evaluation_claim,
+            &evaluation_point,
+            &fri_params,
+        );
+
+        // Verification should fail with wrong claim
+        assert!(
+            verify_result.is_err(),
+            "Verification should fail with wrong evaluation claim"
+        );
     }
 }

@@ -1,18 +1,7 @@
-use crate::{friveil::FriVeil, poly::FriVeilUtils};
-use binius_field::{ExtensionField, Field};
-use binius_math::ntt::{NeighborsLastMultiThread, domain_context::GenericPreExpanded};
-use binius_prover::merkle_tree::MerkleTreeProver;
-use binius_transcript::{ProverTranscript, TranscriptWriter};
-use binius_verifier::{
-    config::{B1, B128, StdChallenger},
-    hash::{StdCompression, StdDigest},
-    merkle_tree::{BinaryMerkleTreeScheme, MerkleTreeScheme},
-};
-use core::slice;
-use rand::{RngCore, SeedableRng, rngs::StdRng};
-use std::iter::repeat_with;
+use crate::{friveil::FriVeilDefault, poly::FriVeilUtils};
+
 use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 mod friveil;
 mod poly;
@@ -31,7 +20,7 @@ fn main() {
 
     let start = Instant::now();
     info!("Converting input bytes to packed MLE...");
-    let packed_mle_values = FriVeilUtils::<B128>::new()
+    let packed_mle_values = FriVeilUtils::new()
         .bytes_to_packed_mle(&random_data_bytes)
         .unwrap();
 
@@ -51,11 +40,7 @@ fn main() {
 
     let start = Instant::now();
     info!("Initializing FRIVeil context...");
-    let friveil = FriVeil::<
-        B128,
-        BinaryMerkleTreeScheme<B128, StdDigest, StdCompression>,
-        NeighborsLastMultiThread<GenericPreExpanded<B128>>,
-    >::new(
+    let friveil = FriVeilDefault::new(
         LOG_INV_RATE,
         NUM_TEST_QUERIES,
         packed_mle_values.total_n_vars,
@@ -153,27 +138,4 @@ fn main() {
     );
 
     info!("Final result: {:?}", result);
-}
-
-pub fn random_scalars<F: Field>(mut rng: impl RngCore, n: usize) -> Vec<F> {
-    repeat_with(|| F::random(&mut rng)).take(n).collect()
-}
-
-pub fn lift_small_to_large_field<F, FE>(small_field_elms: &[F]) -> Vec<FE>
-where
-    F: Field,
-    FE: Field + ExtensionField<F>,
-{
-    small_field_elms.iter().map(|&elm| FE::from(elm)).collect()
-}
-
-pub fn large_field_mle_to_small_field_mle<F, FE>(large_field_mle: &[FE]) -> Vec<F>
-where
-    F: Field,
-    FE: Field + ExtensionField<F>,
-{
-    large_field_mle
-        .iter()
-        .flat_map(|elm| ExtensionField::<F>::iter_bases(elm))
-        .collect()
 }
