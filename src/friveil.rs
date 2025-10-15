@@ -118,6 +118,8 @@ where
             .collect();
         Ok(evaluation_point)
     }
+
+    // TODO: optimise
     pub fn calculate_evaluation_claim(
         &self,
         values: &[P::Scalar],
@@ -271,6 +273,48 @@ where
             )
             .map_err(|e| e.to_string())
     }
+
+    // TODO: fix
+    // Helper function only, only needed if we wanna observer NTT encoding behaviour outside the `commit` function
+    pub fn encode_codeword(
+        &self,
+        data: &[P::Scalar],
+        fri_params: FRIParams<P::Scalar>,
+        ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
+    ) -> Result<Vec<P::Scalar>, String> {
+        let rs_code = fri_params.rs_code();
+        let len = 1
+            << (rs_code.log_len() + fri_params.log_batch_size() - P::LOG_WIDTH
+                + rs_code.log_inv_rate());
+        let mut encoded = Vec::with_capacity(len);
+        rs_code
+            .encode_batch(
+                ntt,
+                data.as_ref(),
+                encoded.spare_capacity_mut(),
+                fri_params.log_batch_size(),
+            )
+            .map_err(|e| e.to_string())?;
+        unsafe {
+            // Safety: encode_ext_batch guarantees all elements are initialized on success
+            encoded.set_len(len);
+        }
+        Ok(encoded)
+    }
+
+    // pub fn decode_codeword(
+    //     &self,
+    //     codeword: &[P::Scalar],
+    //     fri_params: FRIParams<P::Scalar>,
+    //     ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
+    // ) -> Result<(), String> {
+    //     let mut code_buffer =
+    //         FieldBuffer::<P>::from_values(codeword.to_vec().as_ref()).map_err(|e| e.to_string())?;
+
+    //     ntt.inverse_transform(code_buffer.to_mut(), 0, fri_params.log_batch_size());
+    //     println!("code_buffer: {:?}", code_buffer.to_ref());
+    //     Ok(())
+    // }
 
     pub fn extract_commitment(
         &self,

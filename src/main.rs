@@ -1,70 +1,118 @@
 use crate::{friveil::FriVeilDefault, poly::FriVeilUtils};
 
 use std::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{Level, debug, error, info, span, warn};
 
 mod friveil;
 mod poly;
 
 fn main() {
-    //this should be the base-2 logarithm of the number of cores.
+    // Initialize enhanced logging with structured output, filtering out verbose internal logs
+    use tracing_subscriber::filter::EnvFilter;
 
-    tracing_subscriber::fmt::init();
+    let filter = EnvFilter::new("info")
+        .add_directive("binius_transcript=error".parse().unwrap())
+        .add_directive("transcript=error".parse().unwrap());
+
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_env_filter(filter)
+        .init();
 
     const LOG_INV_RATE: usize = 1;
     const NUM_TEST_QUERIES: usize = 3;
+    const DATA_SIZE_MB: usize = 16;
+
+    info!("🚀 Starting Binius Data Availability Sampling Scheme");
+    info!("📋 Configuration:");
+    info!("   - Reed-Solomon inverse rate (log2): {}", LOG_INV_RATE);
+    info!("   - FRI test queries: {}", NUM_TEST_QUERIES);
+    info!("   - Data size: {} MB", DATA_SIZE_MB);
 
     // Create arbitrary (nonzero, patterned) data instead of all zeroes.
-    info!("Generating random patterned input data...");
-    let random_data_bytes: Vec<u8> = (0..14 * 1024 * 1024).map(|i| (i % 256) as u8).collect();
+    let _span = span!(Level::INFO, "data_generation").entered();
+    info!("📊 Phase 1: Generating test data ({} MB)", DATA_SIZE_MB);
+    let random_data_bytes: Vec<u8> = (0..DATA_SIZE_MB * 1024 * 1024)
+        .map(|i| (i % 256) as u8)
+        .collect();
+    info!(
+        "✅ Generated {} bytes of patterned test data",
+        random_data_bytes.len()
+    );
+    drop(_span);
 
+    let _span = span!(Level::INFO, "mle_conversion").entered();
+    info!("🔄 Phase 2: Converting bytes to multilinear extension");
     let start = Instant::now();
-    info!("Converting input bytes to packed MLE...");
     let packed_mle_values = FriVeilUtils::new()
         .bytes_to_packed_mle(&random_data_bytes)
         .unwrap();
 
+    let conversion_time = start.elapsed().as_millis();
+    info!("✅ MLE conversion completed in {} ms", conversion_time);
     info!(
-        "Packed MLE values: {:?}",
-        packed_mle_values.packed_values.get(0..2)
-    );
-    info!(
-        "Packed MLE values generated in {} ms (n_vars = {})",
-        start.elapsed().as_millis(),
+        "   - Total variables (n_vars): {}",
         packed_mle_values.total_n_vars
     );
     info!(
-        "Packed MLE values: {:?}",
+        "   - Packed values count: {}",
         packed_mle_values.packed_values.len()
     );
+    debug!(
+        "   - Sample packed values: {:?}",
+        packed_mle_values.packed_values.get(0..2)
+    );
+    drop(_span);
 
+    let _span = span!(Level::INFO, "fri_initialization").entered();
+    info!("🔧 Phase 3: Initializing FRI-based polynomial commitment scheme");
     let start = Instant::now();
-    info!("Initializing FRIVeil context...");
     let friveil = FriVeilDefault::new(
         LOG_INV_RATE,
         NUM_TEST_QUERIES,
         packed_mle_values.total_n_vars,
-        3,
+        3, // log_num_shares
     );
-    info!("FRIVeil initialized in {} ms", start.elapsed().as_millis());
+    let init_time = start.elapsed().as_millis();
+    info!("✅ FRIVeil context initialized in {} ms", init_time);
 
     let start = Instant::now();
-    info!("Calculating evaluation point at position 3...");
-
+    info!("🎲 Generating random evaluation point");
     let evaluation_point = friveil.calculate_evaluation_point_random().unwrap();
-
-    info!("Evaluation point length: {}", evaluation_point.len());
+    let eval_time = start.elapsed().as_millis();
+    info!("✅ Evaluation point generated in {} ms", eval_time);
     info!(
-        "Evaluation context calculated in {} ms",
-        start.elapsed().as_millis()
+        "   - Evaluation point dimensions: {}",
+        evaluation_point.len()
     );
+    drop(_span);
 
+    let _span = span!(Level::INFO, "fri_context_setup").entered();
+    info!("⚙️  Setting up FRI protocol parameters");
+    let start = Instant::now();
     let (fri_params, ntt) = friveil
         .initialize_fri_context(packed_mle_values.packed_mle.clone())
         .unwrap();
+    let context_time = start.elapsed().as_millis();
+    info!("✅ FRI context setup completed in {} ms", context_time);
+    info!(
+        "   - Reed-Solomon code length (log2): {}",
+        fri_params.rs_code().log_len()
+    );
+    info!(
+        "   - Reed-Solomon inverse rate (log2): {}",
+        fri_params.rs_code().log_inv_rate()
+    );
+    info!("   - FRI test queries: {}", fri_params.n_test_queries());
+    drop(_span);
 
+    let _span = span!(Level::INFO, "polynomial_commitment").entered();
+    info!("🔒 Phase 4: Generating polynomial commitment");
     let start = Instant::now();
-    info!("Committing to MLE...");
     let commit_output = friveil
         .commit(
             packed_mle_values.packed_mle.clone(),
@@ -72,33 +120,159 @@ fn main() {
             &ntt,
         )
         .unwrap();
+    let commit_time = start.elapsed().as_millis();
 
-    // SAMPLING
-    for (i, value) in commit_output.codeword.iter().enumerate() {
-        let mut inclusion_proof = friveil
-            .inclusion_proof(&commit_output.committed, i)
-            .unwrap();
-
-        let result = friveil
-            .verify_inclusion_proof(
-                &mut inclusion_proof,
-                &[*value],
-                i,
-                &fri_params,
-                &commit_output.committed,
-            )
-            .unwrap();
-        info!("Sampling point: {} with value: {:?} success", i, value);
-    }
+    info!("✅ Polynomial commitment generated in {} ms", commit_time);
     info!(
-        "Commit output generated in {} ms (commitment size: {})",
-        start.elapsed().as_millis(),
-        commit_output.commitment.len(),
+        "   - Commitment size: {} bytes",
+        commit_output.commitment.len()
     );
+    info!(
+        "   - Codeword length: {} elements",
+        commit_output.codeword.len()
+    );
+    drop(_span);
 
+    let _span = span!(Level::INFO, "codeword_encoding").entered();
+    // info!("🔄 Phase 5: Encoding codeword");
+    // let start = Instant::now();
+    // let encoded_codeword = friveil
+    //     .encode_codeword(&packed_mle_values.packed_values, fri_params.clone(), &ntt)
+    //     .unwrap();
+    // let encode_time = start.elapsed().as_millis();
+    // info!("✅ Codeword encoded in {} ms", encode_time);
+    // encoded_codeword
+    //     .iter()
+    //     .enumerate()
+    //     .for_each(|(i, x)| assert_eq!(*x, commit_output.codeword[i]));
+    // drop(_span);
+
+    let _span = span!(Level::INFO, "data_availability_sampling").entered();
+    info!("🎯 Phase 5: Performing data availability sampling");
+    info!(
+        "   - Total codeword elements to sample: {}",
+        commit_output.codeword.len()
+    );
     let start = Instant::now();
-    info!("Generating proof...");
-    let (mut verifier_transcript) = friveil
+
+    let mut successful_samples = 0;
+    let mut failed_samples = Vec::new();
+    let total_samples = commit_output.codeword.len();
+
+    for (i, value) in commit_output.codeword.iter().enumerate() {
+        let sample_span = span!(Level::DEBUG, "sample_verification", index = i).entered();
+
+        match friveil.inclusion_proof(&commit_output.committed, i) {
+            Ok(mut inclusion_proof) => {
+                match friveil.verify_inclusion_proof(
+                    &mut inclusion_proof,
+                    &[*value],
+                    i,
+                    &fri_params,
+                    &commit_output.committed,
+                ) {
+                    Ok(_) => {
+                        successful_samples += 1;
+                        debug!("✅ Sample {} verified successfully (value: {:?})", i, value);
+                    }
+                    Err(e) => {
+                        failed_samples.push((i, format!("Verification failed: {}", e)));
+                        debug!("❌ Sample {} verification failed: {}", i, e);
+                    }
+                }
+            }
+            Err(e) => {
+                failed_samples.push((i, format!("Inclusion proof generation failed: {}", e)));
+                debug!(
+                    "❌ Failed to generate inclusion proof for sample {}: {}",
+                    i, e
+                );
+            }
+        }
+        drop(sample_span);
+
+        // Log progress every 1000 samples for large datasets
+        if (i + 1) % 1000 == 0 || i == total_samples - 1 {
+            info!("   Progress: {}/{} samples processed", i + 1, total_samples);
+        }
+    }
+
+    let sampling_time = start.elapsed().as_millis();
+
+    // Display results in a table format
+    info!(
+        "✅ Data availability sampling completed in {} ms",
+        sampling_time
+    );
+    info!("");
+    info!("📊 DATA AVAILABILITY SAMPLING RESULTS");
+    info!("┌─────────────────────────────────┬─────────────────┐");
+    info!("│ Metric                          │ Value           │");
+    info!("├─────────────────────────────────┼─────────────────┤");
+    info!(
+        "│ Total Samples                   │ {:>15} │",
+        total_samples
+    );
+    info!(
+        "│ Successful Verifications        │ {:>15} │",
+        successful_samples
+    );
+    info!(
+        "│ Failed Verifications            │ {:>15} │",
+        failed_samples.len()
+    );
+    info!(
+        "│ Success Rate                    │ {:>13.2}% │",
+        (successful_samples as f64 / total_samples as f64) * 100.0
+    );
+    info!(
+        "│ Sampling Duration               │ {:>12} ms │",
+        sampling_time
+    );
+    info!(
+        "│ Average Time per Sample         │ {:>10.3} ms │",
+        sampling_time as f64 / total_samples as f64
+    );
+    info!("└─────────────────────────────────┴─────────────────┘");
+
+    if !failed_samples.is_empty() {
+        warn!("");
+        warn!("⚠️  FAILED SAMPLES DETAILS:");
+        warn!("┌───────────┬─────────────────────────────────────────────────────┐");
+        warn!("│ Sample ID │ Error Description                                   │");
+        warn!("├───────────┼─────────────────────────────────────────────────────┤");
+        for (id, error) in failed_samples.iter().take(10) {
+            // Show first 10 failures
+            warn!(
+                "│ {:>9} │ {:<51} │",
+                id,
+                if error.len() > 51 {
+                    format!("{}...", &error[..48])
+                } else {
+                    error.clone()
+                }
+            );
+        }
+        if failed_samples.len() > 10 {
+            warn!(
+                "│ ...       │ ... and {} more failures                        │",
+                failed_samples.len() - 10
+            );
+        }
+        warn!("└───────────┴─────────────────────────────────────────────────────┘");
+        warn!(
+            "⚠️  {} samples failed verification - potential data availability issues",
+            failed_samples.len()
+        );
+    } else {
+        info!("🎉 All samples verified successfully - data is fully available!");
+    }
+    drop(_span);
+
+    let _span = span!(Level::INFO, "proof_generation").entered();
+    info!("📝 Phase 6: Generating evaluation proof");
+    let start = Instant::now();
+    let mut verifier_transcript = friveil
         .prove(
             packed_mle_values.packed_mle.clone(),
             fri_params.clone(),
@@ -107,35 +281,52 @@ fn main() {
             &evaluation_point,
         )
         .unwrap();
-    info!("Proof generated in {} ms", start.elapsed().as_millis());
+    let proof_time = start.elapsed().as_millis();
+    info!("✅ Evaluation proof generated in {} ms", proof_time);
+    drop(_span);
 
+    let _span = span!(Level::INFO, "evaluation_claim").entered();
+    info!("🧮 Computing evaluation claim");
     let start = Instant::now();
-    info!("Calculating evaluation claim...");
     let evaluation_claim = friveil
         .calculate_evaluation_claim(&packed_mle_values.packed_values, &evaluation_point)
         .unwrap();
-    debug!("Evaluation claim: {:?}", evaluation_claim);
-    info!(
-        "Evaluation claim generated in {} ms",
-        start.elapsed().as_millis()
-    );
+    let claim_time = start.elapsed().as_millis();
+    info!("✅ Evaluation claim computed in {} ms", claim_time);
+    debug!("   - Evaluation claim value: {:?}", evaluation_claim);
+    drop(_span);
 
+    let _span = span!(Level::INFO, "final_verification").entered();
+    info!("🔍 Phase 7: Final proof verification");
     let start = Instant::now();
-    info!("Running verification and opening...");
     let result = friveil.verify_evaluation(
         &mut verifier_transcript,
         evaluation_claim,
         &evaluation_point,
         &fri_params,
     );
-    match &result {
-        Ok(_) => info!("Verification succeeded."),
-        Err(e) => error!("Verification failed: {:?}", e),
-    }
-    info!(
-        "Verification and opening complete in {} ms",
-        start.elapsed().as_millis()
-    );
+    let verification_time = start.elapsed().as_millis();
 
-    info!("Final result: {:?}", result);
+    match &result {
+        Ok(_) => {
+            info!(
+                "✅ Final verification succeeded in {} ms",
+                verification_time
+            );
+            info!("🎉 Data Availability Sampling scheme completed successfully!");
+        }
+        Err(e) => {
+            error!(
+                "❌ Final verification failed in {} ms: {:?}",
+                verification_time, e
+            );
+            error!("💥 Data Availability Sampling scheme failed!");
+        }
+    }
+    drop(_span);
+
+    // Summary
+    info!("📊 === EXECUTION SUMMARY ===");
+    info!("Final verification result: {:?}", result);
+    info!("🏁 Binius Data Availability Sampling completed");
 }

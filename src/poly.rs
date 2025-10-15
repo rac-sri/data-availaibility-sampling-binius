@@ -42,14 +42,8 @@ where
         let n_vars = padded_size.ilog2() as usize;
         debug!("N vars: {:?}", n_vars);
         let big_field_n_vars = n_vars
-            .checked_sub(self.log_scalar_bit_width)
-            .or_else(|| Some(self.log_scalar_bit_width))
-            .ok_or_else(|| {
-                format!(
-                    "n_vars ({}) is less than log_scalar_bit_width ({})",
-                    n_vars, self.log_scalar_bit_width
-                )
-            })?;
+            .saturating_sub(self.log_scalar_bit_width)
+            .max(self.log_scalar_bit_width);
         let packed_size = 1 << big_field_n_vars;
         debug!("Packed size: {:?}", packed_size);
 
