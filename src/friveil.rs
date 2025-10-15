@@ -1,4 +1,4 @@
-use binius_field::{ExtensionField, Field, PackedExtension, PackedField};
+use binius_field::{ExtensionField, Field, PackedExtension, PackedField, Random};
 use binius_math::{
     BinarySubspace, FieldBuffer, ReedSolomonCode,
     inner_product::inner_product,
@@ -106,11 +106,12 @@ where
     }
 
     pub fn calculate_evaluation_point_random(&self) -> Result<(Vec<P::Scalar>), String> {
-        let evaluation_point = self.random_scalars::<P::Scalar>(self.n_vars);
-
-        Ok(evaluation_point.clone())
+        let mut rng = StdRng::from_seed([0; 32]);
+        let evaluation_point: Vec<P::Scalar> = repeat_with(|| P::Scalar::random(&mut rng))
+            .take(self.n_vars)
+            .collect();
+        Ok(evaluation_point)
     }
-
     pub fn calculate_evaluation_claim(
         &self,
         values: &[P::Scalar],
@@ -196,7 +197,7 @@ where
         Ok((prover_transcript.into_verifier()))
     }
 
-    pub fn verify_and_open(
+    pub fn verify_evaluation(
         &self,
         verifier_transcript: &mut VerifierTranscript<StdChallenger>,
         evaluation_claim: P::Scalar,
@@ -292,10 +293,5 @@ where
             .iter()
             .flat_map(|elm| ExtensionField::<F>::iter_bases(elm))
             .collect()
-    }
-
-    pub fn random_scalars<F: Field>(&self, n: usize) -> Vec<F> {
-        let mut rng = StdRng::from_seed([0; 32]);
-        repeat_with(|| F::random(&mut rng)).take(n).collect()
     }
 }

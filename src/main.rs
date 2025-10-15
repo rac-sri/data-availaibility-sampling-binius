@@ -137,7 +137,7 @@ fn main() {
 
     let start = Instant::now();
     info!("Running verification and opening...");
-    let result = friveil.verify_and_open(
+    let result = friveil.verify_evaluation(
         &mut verifier_transcript,
         evaluation_claim,
         &evaluation_point,
@@ -177,27 +177,3 @@ where
         .flat_map(|elm| ExtensionField::<F>::iter_bases(elm))
         .collect()
 }
-
-// multi thread log inv = 3
-// packed mle values generated (1905 ms)
-// friveil initialized (0 ms)
-// evaluation context calculated (0 ms)
-// fri context initialized (277 ms)
-// commit output generated (7831 ms)
-// proof generated (7750 ms)
-// evaluation claim generated (154951 ms)
-// verification and opening complete (8 ms)
-// result: Ok(())
-// result logging complete (0 ms)
-
-// single thread
-// packed mle values generated (1911 ms)
-// friveil initialized (0 ms)
-// evaluation context calculated (0 ms)
-// fri context initialized (278 ms)
-// commit output generated (26202 ms)
-// proof generated (8064 ms)
-// evaluation claim generated (152558 ms)
-// verification and opening complete (8 ms)
-// result: Ok(())
-// result logging complete (0 ms)
