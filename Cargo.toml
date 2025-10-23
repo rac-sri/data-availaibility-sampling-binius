@@ -20,6 +20,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rayon = {version = "1.8", optional = true}
 clap = { version = "4.0", features = ["derive"] }
 
+[dev-dependencies]
+divan = { version = "0.1"}
+rand = { version = "0.9.1", default-features = false, features = [
+    "std",
+    "std_rng",
+    "thread_rng",
+] }
+
+[[bench]]
+name = "commitment"
+harness = false
+
 [features]
 default = []
 parallel = ["rayon"]

@@ -25,8 +25,9 @@ fn main() {
         .init();
 
     const LOG_INV_RATE: usize = 1;
-    const NUM_TEST_QUERIES: usize = 3;
-    const DATA_SIZE_MB: usize = 4;
+    // Security parameter: number of queries to perform in the FRI protocol
+    const NUM_TEST_QUERIES: usize = 128;
+    const DATA_SIZE_MB: usize = 16;
 
     info!("🚀 Starting Binius Data Availability Sampling Scheme");
     info!("📋 Configuration:");
@@ -163,43 +164,59 @@ fn main() {
     let total_samples = commit_output.codeword.len();
     let sample_size = total_samples / 2;
     let indices = sample(&mut StdRng::from_seed([0; 32]), total_samples, sample_size).into_vec();
+    let commitment_bytes: [u8; 32] = commit_output
+        .commitment
+        .to_vec()
+        .try_into()
+        .expect("We know commitment size is 32 bytes");
 
-    for (k, &i) in indices.iter().enumerate() {
-        let sample_span = span!(Level::DEBUG, "sample_verification", index = i).entered();
+    for &sample_index in indices.iter() {
+        let sample_span =
+            span!(Level::DEBUG, "sample_verification", index = sample_index).entered();
 
-        match friveil.inclusion_proof(&commit_output.committed, i) {
+        match friveil.inclusion_proof(&commit_output.committed, sample_index) {
             Ok(mut inclusion_proof) => {
-                let value = commit_output.codeword[i];
+                let value = commit_output.codeword[sample_index];
                 match friveil.verify_inclusion_proof(
                     &mut inclusion_proof,
                     &[value],
-                    i,
+                    sample_index,
                     &fri_params,
-                    &commit_output.committed,
+                    commitment_bytes,
                 ) {
                     Ok(_) => {
                         successful_samples += 1;
-                        debug!("✅ Sample {} verified successfully (value: {:?})", i, value);
+                        debug!(
+                            "✅ Sample {} verified successfully (value: {:?})",
+                            sample_index, value
+                        );
                     }
                     Err(e) => {
-                        failed_samples.push((i, format!("Verification failed: {}", e)));
-                        debug!("❌ Sample {} verification failed: {}", i, e);
+                        failed_samples.push((sample_index, format!("Verification failed: {}", e)));
+                        debug!("❌ Sample {} verification failed: {}", sample_index, e);
                     }
                 }
             }
             Err(e) => {
-                failed_samples.push((i, format!("Inclusion proof generation failed: {}", e)));
+                failed_samples.push((
+                    sample_index,
+                    format!("Inclusion proof generation failed: {}", e),
+                ));
                 debug!(
                     "❌ Failed to generate inclusion proof for sample {}: {}",
-                    i, e
+                    sample_index, e
                 );
             }
         }
         drop(sample_span);
 
         // Log progress every 1000 samples for large datasets
-        if (i + 1) % 1000 == 0 || i == total_samples - 1 {
-            info!("   Progress: {}/{} samples processed", i + 1, total_samples);
+        if (sample_index + 1) % 1000 == 0 || sample_index == total_samples - 1 {
+            info!(
+                "   Progress: {}/{} samples processed",
+                sample_index + 1,
+                total_samples
+            );
         }
     }
 

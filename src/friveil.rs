@@ -92,7 +92,7 @@ where
         let fri_arities = if P::LOG_WIDTH == 2 {
             vec![2, 2]
         } else {
-            vec![4; packed_buffer.log_len() / 4]
+            vec![2; packed_buffer.log_len() / 2]
         };
 
         let fri_params = FRIParams::new(
@@ -111,7 +111,7 @@ where
         Ok((fri_params, ntt))
     }
 
-    pub fn calculate_evaluation_point_random(&self) -> Result<(Vec<P::Scalar>), String> {
+    pub fn calculate_evaluation_point_random(&self) -> Result<Vec<P::Scalar>, String> {
         let mut rng = StdRng::from_seed([0; 32]);
         let evaluation_point: Vec<P::Scalar> = repeat_with(|| P::Scalar::random(&mut rng))
             .take(self.n_vars)
@@ -126,12 +126,12 @@ where
         evaluation_point: &[P::Scalar],
     ) -> Result<P::Scalar, String> {
         let lifted_small_field_mle = self.lift_small_to_large_field::<B1, P::Scalar>(
-            &self.large_field_mle_to_small_field_mle::<B1, P::Scalar>(&values),
+            &self.large_field_mle_to_small_field_mle::<B1, P::Scalar>(values),
         );
 
         let evaluation_claim = inner_product::<P::Scalar>(
             lifted_small_field_mle,
-            eq_ind_partial_eval(&evaluation_point)
+            eq_ind_partial_eval(evaluation_point)
                 .as_ref()
                 .iter()
                 .copied()
@@ -240,7 +240,7 @@ where
     ) -> Result<VerifierTranscript<StdChallenger>, String> {
         let mut proof_writer = ProverTranscript::new(StdChallenger::default());
         self.merkle_prover
-            .prove_opening(&committed, 0, index, &mut proof_writer.message())
+            .prove_opening(committed, 0, index, &mut proof_writer.message())
             .map_err(|e| e.to_string())?;
 
         let proof_reader = proof_writer.into_verifier();
@@ -254,21 +254,17 @@ where
         data: &[P::Scalar],
         index: usize,
         fri_params: &FRIParams<P::Scalar>,
-        committed: &<BinaryMerkleTreeProver<
-            P::Scalar,
-            StdDigest,
-            ParallelCompressionAdaptor<StdCompression>,
-        > as MerkleTreeProver<P::Scalar>>::Committed,
+        commitment: [u8; 32],
     ) -> Result<(), String> {
         let tree_depth = fri_params.rs_code().log_len();
         self.merkle_prover
             .scheme()
             .verify_opening(
                 index,
-                &data,
+                data,
                 0,
                 tree_depth,
-                &[committed.root()],
+                &[commitment.into()],
                 &mut verifier_transcript.message(),
             )
             .map_err(|e| e.to_string())
@@ -276,6 +272,7 @@ where
 
     // TODO: fix
     // Helper function only, only needed if we wanna observer NTT encoding behaviour outside the `commit` function
+    #[allow(dead_code)]
     pub fn encode_codeword(
         &self,
         data: &[P::Scalar],
@@ -317,6 +314,7 @@ where
     //     Ok(())
     // }
 
+    #[allow(dead_code)]
     pub fn extract_commitment(
         &self,
         verifier_transcript: &mut VerifierTranscript<StdChallenger>,
@@ -472,6 +470,11 @@ mod tests {
         assert!(!commit_output.commitment.is_empty());
         assert!(!commit_output.codeword.is_empty());
 
+        let commitment_bytes: [u8; 32] = commit_output
+            .commitment
+            .to_vec()
+            .try_into()
+            .expect("We know commitment size is 32 bytes");
         // Test inclusion proofs for first few elements
         for i in 0..std::cmp::min(5, commit_output.codeword.len()) {
             let value = commit_output.codeword[i];
@@ -488,7 +491,7 @@ mod tests {
                 &[value],
                 i,
                 &fri_params,
-                &commit_output.committed,
+                commitment_bytes,
             );
             assert!(
                 verify_result.is_ok(),
