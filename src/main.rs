@@ -25,7 +25,8 @@ fn main() {
         .init();
 
     const LOG_INV_RATE: usize = 1;
-    const NUM_TEST_QUERIES: usize = 3;
+    // Security parameter: number of queries to perform in the FRI protocol
+    const NUM_TEST_QUERIES: usize = 128;
     const DATA_SIZE_MB: usize = 16;
 
     info!("🚀 Starting Binius Data Availability Sampling Scheme");
@@ -162,8 +163,9 @@ fn main() {
     let total_samples = commit_output.codeword.len();
     let sample_size = total_samples / 2;
     let indices = sample(&mut StdRng::from_seed([0; 32]), total_samples, sample_size).into_vec();
+    let commitment_bytes: [u8; 32] = commit_output.commitment.to_vec().try_into().expect("We know commitment size is 32 bytes");
 
-    for (k, &i) in indices.iter().enumerate() {
+    for &i in indices.iter() {
         let sample_span = span!(Level::DEBUG, "sample_verification", index = i).entered();
 
         match friveil.inclusion_proof(&commit_output.committed, i) {
@@ -174,7 +176,7 @@ fn main() {
                     &[value],
                     i,
                     &fri_params,
-                    &commit_output.committed,
+                    commitment_bytes,
                 ) {
                     Ok(_) => {
                         successful_samples += 1;
