@@ -92,7 +92,7 @@ where
         let fri_arities = if P::LOG_WIDTH == 2 {
             vec![2, 2]
         } else {
-            vec![2; packed_buffer.log_len()/2]
+            vec![2; packed_buffer.log_len() / 2]
         };
 
         let fri_params = FRIParams::new(
@@ -469,6 +469,11 @@ mod tests {
         assert!(!commit_output.commitment.is_empty());
         assert!(!commit_output.codeword.is_empty());
 
+        let commitment_bytes: [u8; 32] = commit_output
+            .commitment
+            .to_vec()
+            .try_into()
+            .expect("We know commitment size is 32 bytes");
         // Test inclusion proofs for first few elements
         for i in 0..std::cmp::min(5, commit_output.codeword.len()) {
             let value = commit_output.codeword[i];
@@ -485,7 +490,7 @@ mod tests {
                 &[value],
                 i,
                 &fri_params,
-                &commit_output.committed,
+                commitment_bytes,
             );
             assert!(
                 verify_result.is_ok(),

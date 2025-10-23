@@ -163,7 +163,11 @@ fn main() {
     let total_samples = commit_output.codeword.len();
     let sample_size = total_samples / 2;
     let indices = sample(&mut StdRng::from_seed([0; 32]), total_samples, sample_size).into_vec();
-    let commitment_bytes: [u8; 32] = commit_output.commitment.to_vec().try_into().expect("We know commitment size is 32 bytes");
+    let commitment_bytes: [u8; 32] = commit_output
+        .commitment
+        .to_vec()
+        .try_into()
+        .expect("We know commitment size is 32 bytes");
 
     for &i in indices.iter() {
         let sample_span = span!(Level::DEBUG, "sample_verification", index = i).entered();
