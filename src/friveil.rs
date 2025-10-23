@@ -270,7 +270,6 @@ where
             .map_err(|e| e.to_string())
     }
 
-    // TODO: fix
     // Helper function only, only needed if we wanna observer NTT encoding behaviour outside the `commit` function
     #[allow(dead_code)]
     pub fn encode_codeword(
@@ -285,6 +284,7 @@ where
                 + rs_code.log_inv_rate());
 
         let mut encoded = Vec::with_capacity(len);
+
         rs_code
             .encode_batch(
                 ntt,
@@ -293,26 +293,42 @@ where
                 fri_params.log_batch_size(),
             )
             .map_err(|e| e.to_string())?;
+
         unsafe {
             // Safety: encode_ext_batch guarantees all elements are initialized on success
             encoded.set_len(len);
         }
+
         Ok(encoded)
     }
 
-    // pub fn decode_codeword(
-    //     &self,
-    //     codeword: &[P::Scalar],
-    //     fri_params: FRIParams<P::Scalar>,
-    //     ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
-    // ) -> Result<(), String> {
-    //     let mut code_buffer =
-    //         FieldBuffer::<P>::from_values(codeword.to_vec().as_ref()).map_err(|e| e.to_string())?;
+    pub fn decode_codeword(
+        &self,
+        codeword: &[P::Scalar],
+        fri_params: FRIParams<P::Scalar>,
+        ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
+    ) -> Result<Vec<P::Scalar>, String> {
+        let rs_code = fri_params.rs_code();
+        let len = 1 << (rs_code.log_len() + fri_params.log_batch_size() - P::LOG_WIDTH);
 
-    //     ntt.inverse_transform(code_buffer.to_mut(), 0, fri_params.log_batch_size());
-    //     println!("code_buffer: {:?}", code_buffer.to_ref());
-    //     Ok(())
-    // }
+        let mut decoded = Vec::with_capacity(len);
+        rs_code
+            .decode_batch(
+                ntt,
+                codeword.as_ref(),
+                decoded.spare_capacity_mut(),
+                fri_params.log_batch_size(),
+            )
+            .map_err(|e| e.to_string())?;
+        unsafe {
+            // Safety: encode_ext_batch guarantees all elements are initialized on success
+            decoded.set_len(len);
+        }
+
+        let trim_len = 1 << (rs_code.log_dim() + fri_params.log_batch_size() - P::LOG_WIDTH);
+        decoded.resize(trim_len, P::Scalar::zero());
+        Ok(decoded)
+    }
 
     #[allow(dead_code)]
     pub fn extract_commitment(

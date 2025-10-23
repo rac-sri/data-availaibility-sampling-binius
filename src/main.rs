@@ -150,6 +150,18 @@ fn main() {
         .for_each(|(i, x)| assert_eq!(*x, commit_output.codeword[i]));
     drop(_span);
 
+    let _span = span!(Level::INFO, "decode_codeword").entered();
+    info!("🔄 Phase 6: Decoding codeword");
+    let start = Instant::now();
+    let decoded_codeword = friveil
+        .decode_codeword(&encoded_codeword, fri_params.clone(), &ntt)
+        .unwrap();
+    let decode_time = start.elapsed().as_millis();
+    info!("✅ Codeword decoded in {} ms", decode_time);
+
+    assert_eq!(decoded_codeword, packed_mle_values.packed_values);
+    drop(_span);
+
     let _span = span!(Level::INFO, "data_availability_sampling").entered();
     info!("🎯 Phase 5: Performing data availability sampling");
     info!(
