@@ -169,42 +169,42 @@ fn main() {
         .try_into()
         .expect("We know commitment size is 32 bytes");
 
-    for &i in indices.iter() {
-        let sample_span = span!(Level::DEBUG, "sample_verification", index = i).entered();
+    for &sample_index in indices.iter() {
+        let sample_span = span!(Level::DEBUG, "sample_verification", index = sample_index).entered();
 
-        match friveil.inclusion_proof(&commit_output.committed, i) {
+        match friveil.inclusion_proof(&commit_output.committed, sample_index) {
             Ok(mut inclusion_proof) => {
-                let value = commit_output.codeword[i];
+                let value = commit_output.codeword[sample_index];
                 match friveil.verify_inclusion_proof(
                     &mut inclusion_proof,
                     &[value],
-                    i,
+                    sample_index,
                     &fri_params,
                     commitment_bytes,
                 ) {
                     Ok(_) => {
                         successful_samples += 1;
-                        debug!("✅ Sample {} verified successfully (value: {:?})", i, value);
+                        debug!("✅ Sample {} verified successfully (value: {:?})", sample_index, value);
                     }
                     Err(e) => {
-                        failed_samples.push((i, format!("Verification failed: {}", e)));
-                        debug!("❌ Sample {} verification failed: {}", i, e);
+                        failed_samples.push((sample_index, format!("Verification failed: {}", e)));
+                        debug!("❌ Sample {} verification failed: {}", sample_index, e);
                     }
                 }
             }
             Err(e) => {
-                failed_samples.push((i, format!("Inclusion proof generation failed: {}", e)));
+                failed_samples.push((sample_index, format!("Inclusion proof generation failed: {}", e)));
                 debug!(
                     "❌ Failed to generate inclusion proof for sample {}: {}",
-                    i, e
+                    sample_index, e
                 );
             }
         }
         drop(sample_span);
 
         // Log progress every 1000 samples for large datasets
-        if (i + 1) % 1000 == 0 || i == total_samples - 1 {
-            info!("   Progress: {}/{} samples processed", i + 1, total_samples);
+        if (sample_index + 1) % 1000 == 0 || sample_index == total_samples - 1 {
+            info!("   Progress: {}/{} samples processed", sample_index + 1, total_samples);
         }
     }
 

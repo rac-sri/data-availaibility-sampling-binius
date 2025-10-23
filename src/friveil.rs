@@ -254,7 +254,7 @@ where
         data: &[P::Scalar],
         index: usize,
         fri_params: &FRIParams<P::Scalar>,
-        committment: [u8; 32],
+        commitment: [u8; 32],
     ) -> Result<(), String> {
         let tree_depth = fri_params.rs_code().log_len();
         self.merkle_prover
@@ -264,7 +264,7 @@ where
                 data,
                 0,
                 tree_depth,
-                &[committment.into()],
+                &[commitment.into()],
                 &mut verifier_transcript.message(),
             )
             .map_err(|e| e.to_string())
