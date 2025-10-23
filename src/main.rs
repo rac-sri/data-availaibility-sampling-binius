@@ -26,7 +26,7 @@ fn main() {
 
     const LOG_INV_RATE: usize = 1;
     const NUM_TEST_QUERIES: usize = 3;
-    const DATA_SIZE_MB: usize = 16;
+    const DATA_SIZE_MB: usize = 4;
 
     info!("🚀 Starting Binius Data Availability Sampling Scheme");
     info!("📋 Configuration:");
@@ -76,7 +76,7 @@ fn main() {
         LOG_INV_RATE,
         NUM_TEST_QUERIES,
         packed_mle_values.total_n_vars,
-        3, // log_num_shares
+        80, // log_num_shares
     );
     let init_time = start.elapsed().as_millis();
     info!("✅ FRIVeil context initialized in {} ms", init_time);
@@ -134,19 +134,20 @@ fn main() {
     );
     drop(_span);
 
-    // let _span = span!(Level::INFO, "codeword_encoding").entered();
-    // info!("🔄 Phase 5: Encoding codeword");
-    // let start = Instant::now();
-    // let encoded_codeword = friveil
-    //     .encode_codeword(&packed_mle_values.packed_values, fri_params.clone(), &ntt)
-    //     .unwrap();
-    // let encode_time = start.elapsed().as_millis();
-    // info!("✅ Codeword encoded in {} ms", encode_time);
-    // encoded_codeword
-    //     .iter()
-    //     .enumerate()
-    //     .for_each(|(i, x)| assert_eq!(*x, commit_output.codeword[i]));
-    // drop(_span);
+    let _span = span!(Level::INFO, "codeword_encoding").entered();
+    info!("🔄 Phase 5: Encoding codeword");
+    let start = Instant::now();
+    let encoded_codeword = friveil
+        .encode_codeword(&packed_mle_values.packed_values, fri_params.clone(), &ntt)
+        .unwrap();
+
+    let encode_time = start.elapsed().as_millis();
+    info!("✅ Codeword encoded in {} ms", encode_time);
+    encoded_codeword
+        .iter()
+        .enumerate()
+        .for_each(|(i, x)| assert_eq!(*x, commit_output.codeword[i]));
+    drop(_span);
 
     let _span = span!(Level::INFO, "data_availability_sampling").entered();
     info!("🎯 Phase 5: Performing data availability sampling");

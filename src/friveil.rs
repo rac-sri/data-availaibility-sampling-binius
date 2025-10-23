@@ -92,7 +92,7 @@ where
         let fri_arities = if P::LOG_WIDTH == 2 {
             vec![2, 2]
         } else {
-            vec![1; packed_buffer.log_len() - 1]
+            vec![4; packed_buffer.log_len() / 4]
         };
 
         let fri_params = FRIParams::new(
@@ -284,8 +284,9 @@ where
     ) -> Result<Vec<P::Scalar>, String> {
         let rs_code = fri_params.rs_code();
         let len = 1
-            << (rs_code.log_len() + fri_params.log_batch_size() - P::LOG_WIDTH
+            << (rs_code.log_dim() + fri_params.log_batch_size() - P::LOG_WIDTH
                 + rs_code.log_inv_rate());
+
         let mut encoded = Vec::with_capacity(len);
         rs_code
             .encode_batch(
