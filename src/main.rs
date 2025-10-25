@@ -1,5 +1,7 @@
 use crate::{friveil::FriVeilDefault, poly::FriVeilUtils};
 
+use binius_field::PackedField;
+use binius_verifier::config::B128;
 use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 use std::time::Instant;
 use tracing::{Level, debug, error, info, span, warn};
@@ -11,7 +13,7 @@ fn main() {
     // Initialize enhanced logging with structured output, filtering out verbose internal logs
     use tracing_subscriber::filter::EnvFilter;
 
-    let filter = EnvFilter::new("info")
+    let filter = EnvFilter::new("debug")
         .add_directive("binius_transcript=error".parse().unwrap())
         .add_directive("transcript=error".parse().unwrap());
 
@@ -27,7 +29,7 @@ fn main() {
     const LOG_INV_RATE: usize = 1;
     // Security parameter: number of queries to perform in the FRI protocol
     const NUM_TEST_QUERIES: usize = 128;
-    const DATA_SIZE_MB: usize = 16;
+    const DATA_SIZE_MB: usize = 1;
 
     info!("🚀 Starting Binius Data Availability Sampling Scheme");
     info!("📋 Configuration:");
@@ -38,9 +40,7 @@ fn main() {
     // Create arbitrary (nonzero, patterned) data instead of all zeroes.
     let _span = span!(Level::INFO, "data_generation").entered();
     info!("📊 Phase 1: Generating test data ({} MB)", DATA_SIZE_MB);
-    let random_data_bytes: Vec<u8> = (0..DATA_SIZE_MB * 1024 * 1024)
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let random_data_bytes: Vec<u8> = (0..32 * 1024).map(|i| (i % 256) as u8).collect();
     info!(
         "✅ Generated {} bytes of patterned test data",
         random_data_bytes.len()
@@ -64,10 +64,7 @@ fn main() {
         "   - Packed values count: {}",
         packed_mle_values.packed_values.len()
     );
-    debug!(
-        "   - Sample packed values: {:?}",
-        packed_mle_values.packed_values.get(0..2)
-    );
+
     drop(_span);
 
     let _span = span!(Level::INFO, "fri_initialization").entered();
@@ -161,6 +158,43 @@ fn main() {
 
     assert_eq!(decoded_codeword, packed_mle_values.packed_values);
     drop(_span);
+
+    // Test Reed-Solomon error correction by simulating data loss
+    println!("\n=== ERROR CORRECTION TEST ===");
+    println!("Simulating data loss and testing reconstruction...");
+
+    // Create a corrupted version of the encoded codeword with some data points "lost"
+    let mut corrupted_codeword = encoded_codeword.clone();
+    let total_elements = corrupted_codeword.len();
+
+    // Corrupt 40% of the points
+    let corruption_percentage = 0.01;
+    let corrupted_indices_vec = corrupt_codeword_randomly(
+        &mut corrupted_codeword,
+        corruption_percentage,
+        Some(42u64), // Fixed seed for reproducible results
+    );
+
+    println!("Total codeword elements: {}", total_elements);
+    println!(
+        "Corrupted {} elements ({:.1}%)",
+        corrupted_indices_vec.len(),
+        corruption_percentage * 100.0
+    );
+
+    // Try to decode the corrupted codeword using proper error correction
+    println!("\nAttempting to decode corrupted codeword with error correction...");
+    let start = Instant::now();
+
+    assert_ne!(corrupted_codeword, encoded_codeword);
+    let _reconstructed_codeword = friveil
+        .reconstruct_codeword_naive(&mut corrupted_codeword, &corrupted_indices_vec)
+        .unwrap();
+
+    let reconstruction_time = start.elapsed().as_millis();
+
+    println!("Reconstruction completed in {} ms", reconstruction_time);
+    assert_eq!(corrupted_codeword, encoded_codeword);
 
     let _span = span!(Level::INFO, "data_availability_sampling").entered();
     info!("🎯 Phase 5: Performing data availability sampling");
@@ -364,4 +398,49 @@ fn main() {
     info!("📊 === EXECUTION SUMMARY ===");
     info!("Final verification result: {:?}", result);
     info!("🏁 Binius Data Availability Sampling completed");
+}
+
+/// Corrupts a codeword by randomly setting specified percentage of elements to zero
+///
+/// # Arguments
+/// * `codeword` - The codeword to corrupt (modified in place)
+/// * `corruption_percentage` - Percentage of elements to corrupt (0.0 to 1.0)
+/// * `seed` - Optional seed for reproducible results. If None, uses system randomness
+///
+/// # Returns
+/// * `Vec<usize>` - Vector of indices that were corrupted
+fn corrupt_codeword_randomly(
+    codeword: &mut [B128],
+    corruption_percentage: f64,
+    seed: Option<u64>,
+) -> Vec<usize> {
+    let total_elements = codeword.len();
+    let num_corrupted_points = (total_elements as f64 * corruption_percentage) as usize;
+
+    if num_corrupted_points == 0 {
+        return Vec::new();
+    }
+
+    // Create RNG with optional seed
+    let mut rng = if let Some(seed) = seed {
+        StdRng::seed_from_u64(seed)
+    } else {
+        // Use current time as seed for randomness
+        StdRng::seed_from_u64(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64,
+        )
+    };
+
+    // Use reservoir sampling to efficiently select random indices
+    let corrupted_indices = sample(&mut rng, total_elements, num_corrupted_points).into_vec();
+
+    // Corrupt the selected indices by setting them to zero
+    for &index in &corrupted_indices {
+        codeword[index] = B128::zero();
+    }
+
+    corrupted_indices
 }

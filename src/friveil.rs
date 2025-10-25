@@ -25,6 +25,10 @@ use binius_verifier::{
 use itertools::Itertools;
 use rand::{SeedableRng, rngs::StdRng};
 use std::{iter::repeat_with, marker::PhantomData};
+use tracing::debug;
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub type FriVeilDefault = FriVeil<
     'static,
@@ -328,6 +332,114 @@ where
         let trim_len = 1 << (rs_code.log_dim() + fri_params.log_batch_size() - P::LOG_WIDTH);
         decoded.resize(trim_len, P::Scalar::zero());
         Ok(decoded)
+    }
+
+    /// Decode a Reed-Solomon codeword with error correction for missing points
+    /// This implements proper Reed-Solomon erasure decoding using polynomial interpolation
+    ///
+    /// # Performance
+    /// - When compiled with `--features parallel`, uses rayon for parallel processing
+    /// - When compiled without the parallel feature, uses sequential processing
+    pub fn reconstruct_codeword_naive(
+        &self,
+        corrupted_codeword: &mut [P::Scalar],
+        corrupted_indices: &[usize],
+    ) -> Result<(), String> {
+        let n = corrupted_codeword.len();
+        let domain = (0..corrupted_codeword.len())
+            .map(|i| P::Scalar::from(i as u128))
+            .collect::<Vec<_>>();
+        if corrupted_indices.is_empty() {
+            return Ok(());
+        }
+
+        // Collect known points (x_j, y_j)
+        let known: Vec<(P::Scalar, P::Scalar)> = (0..n)
+            .filter(|i| !corrupted_indices.contains(i))
+            .map(|i| (domain[i], corrupted_codeword[i]))
+            .collect();
+
+        let k = known.len();
+        if k == 0 {
+            return Err("No known points available for reconstruction".into());
+        }
+
+        // For each erased position, interpolate and evaluate
+        #[cfg(feature = "parallel")]
+        {
+            // Parallel version using rayon
+            let reconstructed_values: Vec<(usize, P::Scalar)> = corrupted_indices
+                .par_iter()
+                .map(|&missing| {
+                    debug!("Calculating value for missing index: {}", missing);
+                    let x_e = domain[missing];
+
+                    let mut value = P::Scalar::zero();
+
+                    for j in 0..k {
+                        let (x_j, y_j) = known[j];
+
+                        // Compute L_j(x_e)
+                        let mut l_j = P::Scalar::ONE;
+                        for m in 0..k {
+                            if m == j {
+                                continue;
+                            }
+                            let (x_m, _) = known[m];
+                            l_j = l_j * (x_e - x_m) * (x_j - x_m).invert().unwrap();
+                        }
+
+                        value = value + y_j * l_j;
+                    }
+
+                    debug!(
+                        "Reconstructed value for missing index {}: {:?}",
+                        missing, value
+                    );
+                    (missing, value)
+                })
+                .collect();
+
+            // Apply the reconstructed values to the codeword
+            for (missing, value) in reconstructed_values {
+                corrupted_codeword[missing] = value;
+            }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            // Sequential version
+            for &missing in corrupted_indices {
+                debug!("Calculating value for missing index: {}", missing);
+                let x_e = domain[missing];
+
+                let mut value = P::Scalar::zero();
+
+                for j in 0..k {
+                    let (x_j, y_j) = known[j];
+
+                    // Compute L_j(x_e)
+                    let mut l_j = P::Scalar::ONE;
+                    for m in 0..k {
+                        if m == j {
+                            continue;
+                        }
+                        let (x_m, _) = known[m];
+                        l_j = l_j * (x_e - x_m) * (x_j - x_m).invert().unwrap();
+                    }
+
+                    value = value + y_j * l_j;
+                }
+
+                debug!(
+                    "Reconstructed value for missing index {}: {:?}",
+                    missing, value
+                );
+                corrupted_codeword[missing] = value;
+            }
+        }
+
+        Ok(())
     }
 
     #[allow(dead_code)]
