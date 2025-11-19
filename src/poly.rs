@@ -9,7 +9,7 @@ use tracing::debug;
 const BYTES_PER_ELEMENT: usize = 16; // 128 bit = 16 bytes
 const BITS_PER_ELEMENT: usize = 128;
 
-pub struct FriVeilUtils<P> {
+pub struct Utils<P> {
     log_scalar_bit_width: usize,
     _p: PhantomData<P>,
 }
@@ -24,7 +24,7 @@ where
     pub total_n_vars: usize,
 }
 
-impl<P> FriVeilUtils<P>
+impl<P> Utils<P>
 where
     P: PackedField + ExtensionField<B1>,
     P::Scalar: From<u128> + ExtensionField<B1>,

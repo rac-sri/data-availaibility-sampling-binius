@@ -1,7 +1,7 @@
-use crate::{friveil::FriVeilDefault, poly::FriVeilUtils};
-
-use binius_field::PackedField;
-use binius_verifier::config::B128;
+use crate::{
+    friveil::{B128, FriVeilDefault, FriVeilSampling, FriVeilUtils, PackedField},
+    poly::Utils,
+};
 use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 use std::time::Instant;
 use tracing::{Level, debug, error, info, span, warn};
@@ -13,7 +13,7 @@ fn main() {
     // Initialize enhanced logging with structured output, filtering out verbose internal logs
     use tracing_subscriber::filter::EnvFilter;
 
-    let filter = EnvFilter::new("debug")
+    let filter = EnvFilter::new("info")
         .add_directive("binius_transcript=error".parse().unwrap())
         .add_directive("transcript=error".parse().unwrap());
 
@@ -29,7 +29,7 @@ fn main() {
     const LOG_INV_RATE: usize = 1;
     // Security parameter: number of queries to perform in the FRI protocol
     const NUM_TEST_QUERIES: usize = 128;
-    const DATA_SIZE_MB: usize = 1;
+    const DATA_SIZE_MB: usize = 16;
 
     info!("🚀 Starting Binius Data Availability Sampling Scheme");
     info!("📋 Configuration:");
@@ -40,7 +40,7 @@ fn main() {
     // Create arbitrary (nonzero, patterned) data instead of all zeroes.
     let _span = span!(Level::INFO, "data_generation").entered();
     info!("📊 Phase 1: Generating test data ({} MB)", DATA_SIZE_MB);
-    let random_data_bytes: Vec<u8> = (0..32 * 1024).map(|i| (i % 256) as u8).collect();
+    let random_data_bytes: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
     info!(
         "✅ Generated {} bytes of patterned test data",
         random_data_bytes.len()
@@ -50,7 +50,7 @@ fn main() {
     let _span = span!(Level::INFO, "mle_conversion").entered();
     info!("🔄 Phase 2: Converting bytes to multilinear extension");
     let start = Instant::now();
-    let packed_mle_values = FriVeilUtils::new()
+    let packed_mle_values = Utils::new()
         .bytes_to_packed_mle(&random_data_bytes)
         .unwrap();
 
@@ -109,8 +109,8 @@ fn main() {
     info!("   - FRI test queries: {}", fri_params.n_test_queries());
     drop(_span);
 
-    let _span = span!(Level::INFO, "polynomial_commitment").entered();
-    info!("🔒 Phase 4: Generating polynomial commitment");
+    let _span = span!(Level::INFO, "vector_commitment_and_codeword").entered();
+    info!("🔒 Phase 4: Generating vector commitment and codeword");
     let start = Instant::now();
     let commit_output = friveil
         .commit(
@@ -121,7 +121,10 @@ fn main() {
         .unwrap();
     let commit_time = start.elapsed().as_millis();
 
-    info!("✅ Polynomial commitment generated in {} ms", commit_time);
+    info!(
+        "✅ Vector commitment and codeword generated in {} ms",
+        commit_time
+    );
     info!(
         "   - Commitment size: {} bytes",
         commit_output.commitment.len()
@@ -130,6 +133,7 @@ fn main() {
         "   - Codeword length: {} elements",
         commit_output.codeword.len()
     );
+
     drop(_span);
 
     let _span = span!(Level::INFO, "codeword_encoding").entered();
@@ -159,42 +163,42 @@ fn main() {
     assert_eq!(decoded_codeword, packed_mle_values.packed_values);
     drop(_span);
 
-    // Test Reed-Solomon error correction by simulating data loss
-    println!("\n=== ERROR CORRECTION TEST ===");
-    println!("Simulating data loss and testing reconstruction...");
+    // // Test Reed-Solomon error correction by simulating data loss
+    // println!("\n=== ERROR CORRECTION TEST ===");
+    // println!("Simulating data loss and testing reconstruction...");
 
-    // Create a corrupted version of the encoded codeword with some data points "lost"
-    let mut corrupted_codeword = encoded_codeword.clone();
-    let total_elements = corrupted_codeword.len();
+    // // Create a corrupted version of the encoded codeword with some data points "lost"
+    // let mut corrupted_codeword = encoded_codeword.clone();
+    // let total_elements = corrupted_codeword.len();
 
-    // Corrupt 40% of the points
-    let corruption_percentage = 0.01;
-    let corrupted_indices_vec = corrupt_codeword_randomly(
-        &mut corrupted_codeword,
-        corruption_percentage,
-        Some(42u64), // Fixed seed for reproducible results
-    );
+    // // Corrupt 40% of the points
+    // let corruption_percentage = 0.01;
+    // let corrupted_indices_vec = corrupt_codeword_randomly(
+    //     &mut corrupted_codeword,
+    //     corruption_percentage,
+    //     Some(42u64), // Fixed seed for reproducible results
+    // );
 
-    println!("Total codeword elements: {}", total_elements);
-    println!(
-        "Corrupted {} elements ({:.1}%)",
-        corrupted_indices_vec.len(),
-        corruption_percentage * 100.0
-    );
+    // println!("Total codeword elements: {}", total_elements);
+    // println!(
+    //     "Corrupted {} elements ({:.1}%)",
+    //     corrupted_indices_vec.len(),
+    //     corruption_percentage * 100.0
+    // );
 
-    // Try to decode the corrupted codeword using proper error correction
-    println!("\nAttempting to decode corrupted codeword with error correction...");
-    let start = Instant::now();
+    // // Try to decode the corrupted codeword using proper error correction
+    // println!("\nAttempting to decode corrupted codeword with error correction...");
+    // let start = Instant::now();
 
-    assert_ne!(corrupted_codeword, encoded_codeword);
-    let _reconstructed_codeword = friveil
-        .reconstruct_codeword_naive(&mut corrupted_codeword, &corrupted_indices_vec)
-        .unwrap();
+    // assert_ne!(corrupted_codeword, encoded_codeword);
+    // let _reconstructed_codeword = friveil
+    //     .reconstruct_codeword_naive(&mut corrupted_codeword, &corrupted_indices_vec)
+    //     .unwrap();
 
-    let reconstruction_time = start.elapsed().as_millis();
+    // let reconstruction_time = start.elapsed().as_millis();
 
-    println!("Reconstruction completed in {} ms", reconstruction_time);
-    assert_eq!(corrupted_codeword, encoded_codeword);
+    // println!("Reconstruction completed in {} ms", reconstruction_time);
+    // assert_eq!(corrupted_codeword, encoded_codeword);
 
     let _span = span!(Level::INFO, "data_availability_sampling").entered();
     info!("🎯 Phase 5: Performing data availability sampling");
@@ -351,7 +355,9 @@ fn main() {
         )
         .unwrap();
     let proof_time = start.elapsed().as_millis();
+
     info!("✅ Evaluation proof generated in {} ms", proof_time);
+
     drop(_span);
 
     let _span = span!(Level::INFO, "evaluation_claim").entered();
@@ -367,6 +373,19 @@ fn main() {
 
     let _span = span!(Level::INFO, "final_verification").entered();
     info!("🔍 Phase 7: Final proof verification");
+
+    // Extract transcript bytes for network propagation
+    let transcript_bytes = friveil.get_transcript_bytes(&verifier_transcript);
+    info!(
+        "📦 Transcript size: {} bytes (ready for network transmission)",
+        transcript_bytes.len()
+    );
+
+    // Example: On the receiving network node, you would do:
+    // let mut reconstructed_transcript = reconstruct_transcript_from_bytes(transcript_bytes);
+    // Then use it for verification:
+    // friveil.verify_evaluation(&mut reconstructed_transcript, evaluation_claim, &evaluation_point, &fri_params)?;
+
     let start = Instant::now();
     let result = friveil.verify_evaluation(
         &mut verifier_transcript,

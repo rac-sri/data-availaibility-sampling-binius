@@ -1,4 +1,4 @@
-use binius_das_poc::{friveil::FriVeilDefault, poly::FriVeilUtils};
+use binius_das_poc::{friveil::FriVeilDefault, poly::Utils};
 use divan::Bencher;
 use rand::Rng;
 
@@ -14,7 +14,7 @@ fn build_commitments_32mib_redundancy_factor_2(bencher: Bencher) {
     let random_data: Vec<u8> = (0..DATA_32_MIB).map(|_| rng.random()).collect();
 
     bencher.bench_local(|| {
-        let packed_mle_values = FriVeilUtils::new()
+        let packed_mle_values = Utils::new()
             .bytes_to_packed_mle(&random_data)
             .expect("Data should be convertible to packed MLE values");
         let friveil = FriVeilDefault::new(1, 100, packed_mle_values.total_n_vars, 3);
@@ -37,7 +37,7 @@ fn build_commitments_32mib_redundancy_factor_4(bencher: Bencher) {
     let random_data: Vec<u8> = (0..DATA_32_MIB).map(|_| rng.random()).collect();
 
     bencher.bench_local(|| {
-        let packed_mle_values = FriVeilUtils::new()
+        let packed_mle_values = Utils::new()
             .bytes_to_packed_mle(&random_data)
             .expect("Data should be convertible to packed MLE values");
         let friveil = FriVeilDefault::new(2, 100, packed_mle_values.total_n_vars, 3);
