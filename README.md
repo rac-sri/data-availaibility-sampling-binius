@@ -1,4 +1,4 @@
-# Binius Data Availability Sampling (DAS) Library
+# FRIVeil: Data Availability Sampling (DAS) Library
 
 A Rust implementation of Data Availability Sampling using the Binius polynomial commitment scheme with FRI (Fast Reed-Solomon Interactive Oracle Proofs) and Reed-Solomon error correction.
 
