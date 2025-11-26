@@ -914,13 +914,13 @@ where
                 for idx0 in block_start..(block_start + block_size_half) {
                     let idx1 = block_size_half | idx0;
                     // perform butterfly
-                    let mut u = code.get(idx0).unwrap();
-                    let mut v = code.get(idx1).unwrap();
+                    let mut u = code.get(idx0);
+                    let mut v = code.get(idx1);
 
                     v += u;
                     u += v * twiddle;
-                    code.set(idx0, u).unwrap();
-                    code.set(idx1, v).unwrap();
+                    code.set(idx0, u);
+                    code.set(idx1, v);
                 }
             }
         }
@@ -1244,7 +1244,7 @@ mod tests {
     #[test]
     fn test_data_availability_sampling() {
         use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
-        use tracing::{Level, debug, info, span, warn};
+        use tracing::Level;
 
         // Initialize logging for the test
         let _ = tracing_subscriber::fmt()

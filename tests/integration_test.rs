@@ -1,4 +1,4 @@
-use crate::{
+use binius_das_poc::{
     friveil::{B128, FriVeilDefault, PackedField},
     poly::Utils,
     traits::{FriVeilSampling, FriVeilUtils},
@@ -7,11 +7,8 @@ use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 use std::time::Instant;
 use tracing::{Level, debug, error, info, span, warn};
 
-mod friveil;
-mod poly;
-mod traits;
-
-fn main() {
+#[test]
+fn test_integration_main() {
     // Initialize enhanced logging with structured output, filtering out verbose internal logs
     use tracing_subscriber::filter::EnvFilter;
 
@@ -19,14 +16,16 @@ fn main() {
         .add_directive("binius_transcript=error".parse().unwrap())
         .add_directive("transcript=error".parse().unwrap());
 
-    tracing_subscriber::fmt()
+    // Try to init, but ignore if already initialized (common in tests)
+    let _ = tracing_subscriber::fmt()
         .with_max_level(Level::INFO)
         .with_target(false)
         .with_thread_ids(true)
         .with_file(true)
         .with_line_number(true)
         .with_env_filter(filter)
-        .init();
+        .with_test_writer()
+        .try_init();
 
     const LOG_INV_RATE: usize = 1;
     // Security parameter: number of queries to perform in the FRI protocol
@@ -52,7 +51,7 @@ fn main() {
     let _span = span!(Level::INFO, "mle_conversion").entered();
     info!("🔄 Phase 2: Converting bytes to multilinear extension");
     let start = Instant::now();
-    let packed_mle_values = Utils::new()
+    let packed_mle_values = Utils::<B128>::new()
         .bytes_to_packed_mle(&random_data_bytes)
         .unwrap();
 

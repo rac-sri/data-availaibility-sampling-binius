@@ -5,11 +5,11 @@ edition = "2024"
 
 
 [dependencies]
-binius-prover = { path = "../binius/binius64/prover/prover" }
-binius-verifier = { path = "../binius/binius64/verifier/verifier" }
-binius-math = {path = "../binius/binius64/verifier/math"}
-binius-field = {path = "../binius/binius64/verifier/field"}
-binius-transcript = {path = "../binius/binius64/verifier/transcript"}
+binius-prover = { git = "https://github.com/binius-zk/binius64", rev = "41cda4a3eeb3fcb57bcd324e20a0ffe0b653f896" }
+binius-verifier = { git = "https://github.com/binius-zk/binius64", rev = "41cda4a3eeb3fcb57bcd324e20a0ffe0b653f896" }
+binius-math = { git = "https://github.com/binius-zk/binius64", rev = "41cda4a3eeb3fcb57bcd324e20a0ffe0b653f896" }
+binius-field = { git = "https://github.com/binius-zk/binius64", rev = "41cda4a3eeb3fcb57bcd324e20a0ffe0b653f896" }
+binius-transcript = { git = "https://github.com/binius-zk/binius64", rev = "41cda4a3eeb3fcb57bcd324e20a0ffe0b653f896" }
 rand = { version = "0.9.1", default-features = false, features = [
     "std",
     "std_rng",
