@@ -956,4 +956,109 @@ mod tests {
 
         println!("Successfully verified {} samples", successful_samples);
     }
+
+    #[test]
+    fn test_codeword_decode() {
+        // Create test data
+        let test_data = create_test_data(512);
+        let packed_mle_values = Utils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
+
+        // Initialize FRI context
+        let (fri_params, ntt) = friveil
+            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .expect("Failed to initialize FRI context");
+
+        // Encode codeword
+        let encoded_codeword = friveil
+            .encode_codeword(&packed_mle_values.packed_values, fri_params.clone(), &ntt)
+            .expect("Failed to encode codeword");
+
+        // Decode codeword
+        let decoded_codeword = friveil
+            .decode_codeword(&encoded_codeword, fri_params.clone(), &ntt)
+            .expect("Failed to decode codeword");
+
+        // Verify decoded codeword matches original values
+        assert_eq!(
+            decoded_codeword, packed_mle_values.packed_values,
+            "Decoded codeword should match original packed values"
+        );
+
+        println!("✅ Codeword decode test passed");
+    }
+
+    #[test]
+    fn test_error_correction_reconstruction() {
+        use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
+
+        // Create test data
+        let test_data = create_test_data(2048);
+        let packed_mle_values = Utils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
+
+        // Initialize FRI context
+        let (fri_params, ntt) = friveil
+            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .expect("Failed to initialize FRI context");
+
+        // Encode codeword
+        let encoded_codeword = friveil
+            .encode_codeword(&packed_mle_values.packed_values, fri_params.clone(), &ntt)
+            .expect("Failed to encode codeword");
+
+        // Corrupt the codeword
+        let mut corrupted_codeword = encoded_codeword.clone();
+        let total_elements = corrupted_codeword.len();
+        let corruption_percentage = 0.1;
+
+        // Corrupt random elements
+        let num_corrupted = (total_elements as f64 * corruption_percentage) as usize;
+        let mut rng = StdRng::seed_from_u64(42);
+        let corrupted_indices = sample(&mut rng, total_elements, num_corrupted).into_vec();
+
+        for &index in &corrupted_indices {
+            corrupted_codeword[index] = B128::zero();
+        }
+
+        // Verify corruption happened
+        assert_ne!(
+            corrupted_codeword, encoded_codeword,
+            "Codeword should be corrupted"
+        );
+
+        // Reconstruct corrupted codeword
+        friveil
+            .reconstruct_codeword_naive(&mut corrupted_codeword, &corrupted_indices)
+            .expect("Failed to reconstruct codeword");
+
+        // Verify reconstruction succeeded
+        assert_eq!(
+            corrupted_codeword, encoded_codeword,
+            "Reconstructed codeword should match original encoded codeword"
+        );
+
+        // Decode the reconstructed codeword to verify it's correct
+        let decoded_reconstructed = friveil
+            .decode_codeword(&corrupted_codeword, fri_params.clone(), &ntt)
+            .expect("Failed to decode reconstructed codeword");
+
+        // Verify decoded reconstructed codeword matches original values
+        assert_eq!(
+            decoded_reconstructed, packed_mle_values.packed_values,
+            "Decoded reconstructed codeword should match original packed values"
+        );
+
+        println!(
+            "✅ Error correction reconstruction test passed: {} elements, {:.1}% corruption",
+            total_elements,
+            corruption_percentage * 100.0
+        );
+    }
 }

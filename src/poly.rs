@@ -1,10 +1,9 @@
 use binius_field::{ExtensionField, PackedField};
-use binius_math::{Error, FieldBuffer, FieldSliceMut, ntt::AdditiveNTT};
+use binius_math::FieldBuffer;
 use binius_verifier::config::B1;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::{marker::PhantomData, mem::MaybeUninit};
-use tracing::debug;
+use std::marker::PhantomData;
 
 const BYTES_PER_ELEMENT: usize = 16; // 128 bit = 16 bytes
 const BITS_PER_ELEMENT: usize = 128;
