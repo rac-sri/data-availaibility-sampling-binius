@@ -39,10 +39,8 @@ where
     pub fn bytes_to_packed_mle(&self, data: &[u8]) -> Result<PackedMLE<P>, String> {
         let num_elements = data.len().div_ceil(BITS_PER_ELEMENT);
         let padded_size = num_elements.next_power_of_two();
-
         let big_field_n_vars = padded_size.ilog2() as usize;
         let packed_size = 1 << big_field_n_vars;
-        println!("Packed size: {:?}", packed_size);
 
         #[cfg(feature = "parallel")]
         let mut packed_values: Vec<P::Scalar> = {
@@ -67,15 +65,11 @@ where
             values
         };
 
-        println!("Packed values original: {:?}", packed_values.len());
         packed_values.resize(packed_size, P::Scalar::zero());
-
-        println!("Packed values: {:?}", packed_values.len());
 
         let packed_mle =
             FieldBuffer::<P>::from_values(packed_values.as_slice()).map_err(|e| e.to_string())?;
 
-        println!("Packed mle: {:?}", packed_mle.len());
         let big_field_n_vars = packed_mle.log_len();
         let total_n_vars = big_field_n_vars + self.log_scalar_bit_width;
 

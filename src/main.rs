@@ -31,18 +31,18 @@ fn main() {
     const LOG_INV_RATE: usize = 1;
     // Security parameter: number of queries to perform in the FRI protocol
     const NUM_TEST_QUERIES: usize = 128;
-    const DATA_SIZE_MB: usize = 16;
+    const DATA_SIZE_KB: usize = 9;
 
     info!("🚀 Starting Binius Data Availability Sampling Scheme");
     info!("📋 Configuration:");
     info!("   - Reed-Solomon inverse rate (log2): {}", LOG_INV_RATE);
     info!("   - FRI test queries: {}", NUM_TEST_QUERIES);
-    info!("   - Data size: {} MB", DATA_SIZE_MB);
+    info!("   - Data size: {} KB", DATA_SIZE_KB);
 
     // Create arbitrary (nonzero, patterned) data instead of all zeroes.
     let _span = span!(Level::INFO, "data_generation").entered();
-    info!("📊 Phase 1: Generating test data ({} MB)", DATA_SIZE_MB);
-    let random_data_bytes: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
+    info!("📊 Phase 1: Generating test data ({} KB)", DATA_SIZE_KB);
+    let random_data_bytes: Vec<u8> = (0..DATA_SIZE_KB * 1024).map(|i| (i % 256) as u8).collect();
     info!(
         "✅ Generated {} bytes of patterned test data",
         random_data_bytes.len()
@@ -165,45 +165,187 @@ fn main() {
     assert_eq!(decoded_codeword, packed_mle_values.packed_values);
     drop(_span);
 
-    // Test Reed-Solomon error correction by simulating data loss
-    println!("\n=== ERROR CORRECTION TEST ===");
-    println!("Simulating data loss and testing reconstruction...");
+    if DATA_SIZE_KB < 10 {
+        // Test Reed-Solomon error correction by simulating data loss
+        let _span = span!(Level::INFO, "error_correction_test").entered();
+        info!("🔧 Phase 7: Testing Reed-Solomon error correction");
+        let start = Instant::now();
 
-    // Create a corrupted version of the encoded codeword with some data points "lost"
-    let mut corrupted_codeword = encoded_codeword.clone();
-    let total_elements = corrupted_codeword.len();
+        // Create a corrupted version of the encoded codeword with some data points "lost"
+        let mut corrupted_codeword = encoded_codeword.clone();
+        let total_elements = corrupted_codeword.len();
 
-    // Corrupt 40% of the points
-    let corruption_percentage = 0.01;
-    let corrupted_indices_vec = corrupt_codeword_randomly(
-        &mut corrupted_codeword,
-        corruption_percentage,
-        Some(42u64), // Fixed seed for reproducible results
+        let corruption_percentage = 0.1;
+        let corrupted_indices_vec =
+            corrupt_codeword_randomly(&mut corrupted_codeword, corruption_percentage, Some(42u64));
+
+        info!("   - Total codeword elements: {}", total_elements);
+        info!(
+            "   - Corrupted {} elements ({:.1}%)",
+            corrupted_indices_vec.len(),
+            corruption_percentage * 100.0
+        );
+
+        info!("🔄 Attempting error correction...");
+        assert_ne!(corrupted_codeword, encoded_codeword);
+
+        let _reconstructed_codeword = friveil
+            .reconstruct_codeword_naive(&mut corrupted_codeword, &corrupted_indices_vec)
+            .unwrap();
+
+        let reconstruction_time = start.elapsed().as_millis();
+
+        info!("✅ Reconstruction completed in {} ms", reconstruction_time);
+        assert_eq!(corrupted_codeword, encoded_codeword);
+        drop(_span);
+    } else {
+        info!("Phase 7: Skipping error correction test for big data size");
+    }
+
+    let _span = span!(Level::INFO, "data_availability_sampling").entered();
+    info!("🎯 Phase 8: Performing data availability sampling");
+    info!(
+        "   - Total codeword elements to sample: {}",
+        commit_output.codeword.len()
     );
-
-    println!("Total codeword elements: {}", total_elements);
-    println!(
-        "Corrupted {} elements ({:.1}%)",
-        corrupted_indices_vec.len(),
-        corruption_percentage * 100.0
-    );
-
-    // Try to decode the corrupted codeword using proper error correction
-    println!("\nAttempting to decode corrupted codeword with error correction...");
     let start = Instant::now();
 
-    assert_ne!(corrupted_codeword, encoded_codeword);
+    let mut successful_samples = 0;
+    let mut failed_samples = Vec::new();
 
-    let _reconstructed_codeword = friveil
-        .reconstruct_codeword_naive(&mut corrupted_codeword, &corrupted_indices_vec)
-        .unwrap();
+    let total_samples = commit_output.codeword.len();
+    let sample_size = total_samples / 2;
+    let indices = sample(&mut StdRng::from_seed([0; 32]), total_samples, sample_size).into_vec();
+    let commitment_bytes: [u8; 32] = commit_output
+        .commitment
+        .to_vec()
+        .try_into()
+        .expect("We know commitment size is 32 bytes");
 
-    let reconstruction_time = start.elapsed().as_millis();
+    for &sample_index in indices.iter() {
+        let sample_span =
+            span!(Level::DEBUG, "sample_verification", index = sample_index).entered();
 
-    println!("Reconstruction completed in {} ms", reconstruction_time);
-    assert_eq!(corrupted_codeword, encoded_codeword);
+        match friveil.inclusion_proof(&commit_output.committed, sample_index) {
+            Ok(mut inclusion_proof) => {
+                let value = commit_output.codeword[sample_index];
+                match friveil.verify_inclusion_proof(
+                    &mut inclusion_proof,
+                    &[value],
+                    sample_index,
+                    &fri_params,
+                    commitment_bytes,
+                ) {
+                    Ok(_) => {
+                        successful_samples += 1;
+                        debug!(
+                            "✅ Sample {} verified successfully (value: {:?})",
+                            sample_index, value
+                        );
+                    }
+                    Err(e) => {
+                        failed_samples.push((sample_index, format!("Verification failed: {}", e)));
+                        debug!("❌ Sample {} verification failed: {}", sample_index, e);
+                    }
+                }
+            }
+            Err(e) => {
+                failed_samples.push((
+                    sample_index,
+                    format!("Inclusion proof generation failed: {}", e),
+                ));
+                debug!(
+                    "❌ Failed to generate inclusion proof for sample {}: {}",
+                    sample_index, e
+                );
+            }
+        }
+        drop(sample_span);
+
+        // Log progress every 1000 samples for large datasets
+        if (sample_index + 1) % 1000 == 0 || sample_index == total_samples - 1 {
+            info!(
+                "   Progress: {}/{} samples processed",
+                sample_index + 1,
+                total_samples
+            );
+        }
+    }
+
+    let sampling_time = start.elapsed().as_millis();
+
+    // Display results in a table format
+    info!(
+        "✅ Data availability sampling completed in {} ms",
+        sampling_time
+    );
+    info!("");
+    info!("📊 DATA AVAILABILITY SAMPLING RESULTS");
+    info!("┌─────────────────────────────────┬─────────────────┐");
+    info!("│ Metric                          │ Value           │");
+    info!("├─────────────────────────────────┼─────────────────┤");
+    info!(
+        "│ Total Samples                   │ {:>15} │",
+        total_samples
+    );
+    info!(
+        "│ Successful Verifications        │ {:>15} │",
+        successful_samples
+    );
+    info!(
+        "│ Failed Verifications            │ {:>15} │",
+        failed_samples.len()
+    );
+    info!(
+        "│ Success Rate                    │ {:>13.2}% │",
+        (successful_samples as f64 / total_samples as f64) * 100.0
+    );
+    info!(
+        "│ Sampling Duration               │ {:>12} ms │",
+        sampling_time
+    );
+    info!(
+        "│ Average Time per Sample         │ {:>10.3} ms │",
+        sampling_time as f64 / total_samples as f64
+    );
+    info!("└─────────────────────────────────┴─────────────────┘");
+
+    if !failed_samples.is_empty() {
+        warn!("");
+        warn!("⚠️  FAILED SAMPLES DETAILS:");
+        warn!("┌───────────┬─────────────────────────────────────────────────────┐");
+        warn!("│ Sample ID │ Error Description                                   │");
+        warn!("├───────────┼─────────────────────────────────────────────────────┤");
+        for (id, error) in failed_samples.iter().take(10) {
+            // Show first 10 failures
+            warn!(
+                "│ {:>9} │ {:<51} │",
+                id,
+                if error.len() > 51 {
+                    format!("{}...", &error[..48])
+                } else {
+                    error.clone()
+                }
+            );
+        }
+        if failed_samples.len() > 10 {
+            warn!(
+                "│ ...       │ ... and {} more failures                        │",
+                failed_samples.len() - 10
+            );
+        }
+        warn!("└───────────┴─────────────────────────────────────────────────────┘");
+        warn!(
+            "⚠️  {} samples failed verification - potential data availability issues",
+            failed_samples.len()
+        );
+    } else {
+        info!("🎉 All samples verified successfully - data is fully available!");
+    }
+    drop(_span);
+
     let _span = span!(Level::INFO, "proof_generation").entered();
-    info!("📝 Phase 6: Generating evaluation proof");
+    info!("📝 Phase 9: Generating evaluation proof");
     let start = Instant::now();
     let mut verifier_transcript = friveil
         .prove(
@@ -233,7 +375,7 @@ fn main() {
     drop(_span);
 
     let _span = span!(Level::INFO, "final_verification").entered();
-    info!("🔍 Phase 7: Final proof verification");
+    info!("🔍 Phase 10: Final proof verification");
 
     // Extract transcript bytes for network propagation
     let transcript_bytes = friveil.get_transcript_bytes(&verifier_transcript);

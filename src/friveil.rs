@@ -121,7 +121,6 @@ where
 
     pub fn calculate_evaluation_point_random(&self) -> Result<Vec<P::Scalar>, String> {
         let mut rng = StdRng::from_seed([0; 32]);
-        println!("self.n_vars {}", self.n_vars);
         let evaluation_point: Vec<P::Scalar> = repeat_with(|| P::Scalar::random(&mut rng))
             .take(self.n_vars)
             .collect();
@@ -557,7 +556,7 @@ where
                 }
             }
         }
-        println!("code: {:?}", code);
+
         Ok(())
     }
 }
