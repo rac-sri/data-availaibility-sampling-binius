@@ -1,3 +1,24 @@
+//! FRI-Veil: FRI-based Vector Commitment Scheme with Data Availability Sampling
+//!
+//! This module implements a polynomial commitment scheme using FRI Binius (Fast Reed-Solomon
+//! Interactive Oracle Proofs) combined with Merkle tree commitments. It provides:
+//!
+//! - **Polynomial Commitment**: Commit to multilinear polynomials over binary fields
+//! - **Reed-Solomon Encoding**: Error correction codes for data availability
+//! - **Merkle Tree Commitments**: Cryptographic commitments to codewords
+//! - **Inclusion Proofs**: Prove that specific values are part of the commitment
+//! - **Data Availability Sampling**: Verify data availability by sampling random positions
+//!
+//! # Architecture
+//!
+//! ```text
+//! Data → MLE → FRI Context → Commitment → Encoding/Decoding
+//!                                ↓
+//!                         Merkle Tree Root
+//!                                ↓
+//!                    Inclusion Proofs + Sampling
+//! ```
+
 use crate::traits::{FriVeilSampling, FriVeilUtils};
 pub use binius_field::PackedField;
 use binius_field::{ExtensionField, Field, PackedExtension, Random};
@@ -33,6 +54,12 @@ use tracing::debug;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Default FRI-Veil configuration using 128-bit binary fields
+///
+/// This type alias provides a convenient default configuration with:
+/// - Packed field: B128 (128-bit binary field)
+/// - Merkle tree: Binary Merkle tree with standard hash functions
+/// - NTT: Neighbors-last multi-threaded NTT implementation
 pub type FriVeilDefault = FriVeil<
     'static,
     B128,
@@ -40,6 +67,19 @@ pub type FriVeilDefault = FriVeil<
     NeighborsLastMultiThread<GenericPreExpanded<B128>>,
 >;
 
+/// FRI-Veil polynomial commitment scheme
+///
+/// Generic over:
+/// - `'a`: Lifetime for NTT reference
+/// - `P`: Packed field type for efficient operations
+/// - `VCS`: Vector commitment scheme (Merkle tree)
+/// - `NTT`: Number Theoretic Transform implementation
+///
+/// # Type Parameters
+///
+/// - `P`: Must be a packed field over B128 scalars with extension field properties
+/// - `VCS`: Merkle tree scheme for vector commitments
+/// - `NTT`: Additive NTT over B128 field, used for Reed-Solomon encoding
 pub struct FriVeil<'a, P, VCS, NTT>
 where
     NTT: AdditiveNTT<Field = B128> + Sync,
@@ -53,7 +93,6 @@ where
     num_test_queries: usize,
     n_vars: usize,
     log_num_shares: usize,
-
     _vcs: PhantomData<VCS>,
 }
 
@@ -63,6 +102,17 @@ where
     VCS: MerkleTreeScheme<P::Scalar>,
     NTT: AdditiveNTT<Field = B128> + Sync,
 {
+    /// Create a new FRI-Veil instance
+    ///
+    /// # Arguments
+    ///
+    /// * `log_inv_rate` - Logarithm of Reed-Solomon inverse rate
+    ///   - 1 means 2x expansion (50% redundancy)
+    ///   - 2 means 4x expansion (75% redundancy)
+    /// * `num_test_queries` - Number of FRI test queries (security parameter)
+    ///   - Typical values: 64-128 for good security
+    /// * `n_vars` - Number of variables in the multilinear polynomial
+    /// * `log_num_shares` - Logarithm of Merkle tree shares
     pub fn new(
         log_inv_rate: usize,
         num_test_queries: usize,
@@ -82,6 +132,21 @@ where
         }
     }
 
+    /// Initialize FRI protocol context and NTT for Reed-Solomon encoding
+    ///
+    /// This sets up the necessary parameters for FRI-based polynomial commitment:
+    /// - Creates Reed-Solomon code with specified expansion rate
+    /// - Configures FRI folding parameters (arities)
+    /// - Initializes NTT domain for efficient encoding/decoding
+    ///
+    /// # Arguments
+    ///
+    /// * `packed_buffer` - Packed field buffer containing the polynomial evaluations
+    ///
+    /// # Returns
+    ///
+    /// * `Ok((FRIParams, NTT))` - FRI parameters and NTT instance
+    /// * `Err(String)` - Error message if initialization fails
     pub fn initialize_fri_context(
         &self,
         packed_buffer: FieldBuffer<P>,
@@ -119,6 +184,20 @@ where
         Ok((fri_params, ntt))
     }
 
+    /// Generate a random evaluation point for polynomial evaluation
+    ///
+    /// Creates a random point in the n-dimensional space for evaluating
+    /// the multilinear polynomial. Uses a fixed seed for reproducibility.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<P::Scalar>)` - Random evaluation point with `n_vars` coordinates
+    /// * `Err(String)` - Error message (currently never fails)
+    ///
+    /// # Note
+    ///
+    /// Uses a fixed seed `[0; 32]` for deterministic behavior in tests.
+    /// For production use, consider using a cryptographically secure RNG.
     pub fn calculate_evaluation_point_random(&self) -> Result<Vec<P::Scalar>, String> {
         let mut rng = StdRng::from_seed([0; 32]);
         let evaluation_point: Vec<P::Scalar> = repeat_with(|| P::Scalar::random(&mut rng))
@@ -127,15 +206,39 @@ where
         Ok(evaluation_point)
     }
 
+    /// Calculate the evaluation claim for a polynomial at a given point
+    ///
+    /// Computes the multilinear extension evaluation using the equality polynomial.
+    /// This is the claimed value that the prover will prove is correct.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Polynomial evaluations (coefficients in evaluation form)
+    /// * `evaluation_point` - Point at which to evaluate the polynomial
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(P::Scalar)` - The evaluation result (claim)
+    /// * `Err(String)` - Error if dimensions don't match
+    ///
+    /// # Algorithm
+    ///
+    /// Uses the equality polynomial to compute:
+    /// ```text
+    /// eval = Σ data[i] * eq(i, evaluation_point)
+    /// ```
+    /// where `eq` is the multilinear equality polynomial
     pub fn calculate_evaluation_claim(
         &self,
         values: &[P::Scalar],
         evaluation_point: &[P::Scalar],
     ) -> Result<P::Scalar, String> {
+        // Convert to small field representation for efficient computation
         let lifted_small_field_mle = self.lift_small_to_large_field::<B1, P::Scalar>(
             &self.large_field_mle_to_small_field_mle::<B1, P::Scalar>(values),
         );
 
+        // Compute inner product with equality polynomial
         let evaluation_claim = inner_product::<P::Scalar>(
             lifted_small_field_mle,
             eq_ind_partial_eval(evaluation_point)
@@ -148,6 +251,31 @@ where
         Ok(evaluation_claim)
     }
 
+    /// Generate a polynomial commitment and codeword
+    ///
+    /// Creates a Merkle tree commitment to the Reed-Solomon encoded codeword.
+    /// This is the core commitment phase of the polynomial commitment scheme.
+    ///
+    /// # Arguments
+    ///
+    /// * `packed_mle` - Packed multilinear extension to commit to
+    /// * `fri_params` - FRI protocol parameters
+    /// * `ntt` - NTT instance for encoding
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(CommitOutput)` - Contains:
+    ///   - `codeword`: Reed-Solomon encoded values
+    ///   - `commitment`: Merkle root (32 bytes)
+    ///   - `committed`: Merkle tree structure for proof generation
+    /// * `Err(String)` - Error message if commitment fails
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let commit_output = friveil.commit(packed_mle, fri_params, &ntt)?;
+    /// println!("Commitment: {:?}", commit_output.commitment);
+    /// ```
     pub fn commit(
         &self,
         packed_mle: FieldBuffer<P>,
@@ -168,7 +296,7 @@ where
         let pcs = OneBitPCSProver::new(ntt, &self.merkle_prover, &fri_params);
         let commit_output = pcs.commit(packed_mle.clone()).map_err(|e| e.to_string())?;
 
-        // Convert the digest type
+        // Convert the digest type to Vec<u8> for easier handling
         Ok(CommitOutput {
             codeword: commit_output.codeword,
             commitment: commit_output.commitment.to_vec(),
@@ -176,6 +304,42 @@ where
         })
     }
 
+    /// Generate an evaluation proof for the committed polynomial
+    ///
+    /// Creates a FRI-based proof that the polynomial evaluates to a specific
+    /// value at the given evaluation point. This proof can be verified without
+    /// access to the full polynomial.
+    ///
+    /// # Arguments
+    ///
+    /// * `packed_mle` - The original packed multilinear extension
+    /// * `fri_params` - FRI protocol parameters
+    /// * `ntt` - NTT instance for encoding
+    /// * `commit_output` - Output from the commit phase
+    /// * `evaluation_point` - Point at which to prove evaluation
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(VerifierTranscript)` - Transcript containing the proof
+    /// * `Err(String)` - Error message if proof generation fails
+    ///
+    /// # Process
+    ///
+    /// 1. Initialize prover transcript with commitment
+    /// 2. Run FRI protocol to generate proof
+    /// 3. Convert to verifier transcript for verification
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let transcript = friveil.prove(
+    ///     packed_mle,
+    ///     fri_params,
+    ///     &ntt,
+    ///     &commit_output,
+    ///     &evaluation_point,
+    /// )?;
+    /// ```
     pub fn prove(
         &self,
         packed_mle: FieldBuffer<P>,
@@ -196,10 +360,12 @@ where
 
         let mut prover_transcript = ProverTranscript::new(StdChallenger::default());
 
+        // Write commitment to transcript
         prover_transcript
             .message()
             .write_bytes(&commit_output.commitment);
 
+        // Generate FRI proof
         pcs.prove(
             &commit_output.codeword,
             &commit_output.committed,
@@ -212,7 +378,27 @@ where
         Ok(prover_transcript.into_verifier())
     }
 
-    // Helper function only, only needed if we wanna observer NTT encoding behaviour outside the `commit` function
+    /// Encode data using Reed-Solomon code with NTT
+    ///
+    /// This is a helper function to observe NTT encoding behavior outside
+    /// the `commit` function. Applies Reed-Solomon encoding to expand data
+    /// with redundancy for error correction.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Input data to encode
+    /// * `fri_params` - FRI parameters containing Reed-Solomon code configuration
+    /// * `ntt` - NTT instance for efficient encoding
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<P::Scalar>)` - Encoded codeword with redundancy
+    /// * `Err(String)` - Error message if encoding fails
+    ///
+    /// # Note
+    ///
+    /// This function is marked `#[allow(dead_code)]` as it's primarily used
+    /// for testing and debugging. The `commit` function handles encoding internally.
     #[allow(dead_code)]
     pub fn encode_codeword(
         &self,
@@ -244,6 +430,23 @@ where
         Ok(encoded)
     }
 
+    /// Lift elements from a small field to a large extension field
+    ///
+    /// Converts field elements from a base field `F` to an extension field `FE`.
+    /// This is used for efficient computation in the extension field.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `F` - Base field type
+    /// * `FE` - Extension field type (must extend `F`)
+    ///
+    /// # Arguments
+    ///
+    /// * `small_field_elms` - Elements in the base field
+    ///
+    /// # Returns
+    ///
+    /// Vector of elements lifted to the extension field
     pub fn lift_small_to_large_field<F, FE>(&self, small_field_elms: &[F]) -> Vec<FE>
     where
         F: Field,
@@ -252,6 +455,23 @@ where
         small_field_elms.iter().map(|&elm| FE::from(elm)).collect()
     }
 
+    /// Convert large field MLE to small field MLE representation
+    ///
+    /// Decomposes extension field elements into their base field components.
+    /// This is the inverse operation of `lift_small_to_large_field`.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `F` - Base field type
+    /// * `FE` - Extension field type (must extend `F`)
+    ///
+    /// # Arguments
+    ///
+    /// * `large_field_mle` - MLE in extension field
+    ///
+    /// # Returns
+    ///
+    /// Vector of base field elements (flattened representation)
     fn large_field_mle_to_small_field_mle<F, FE>(&self, large_field_mle: &[FE]) -> Vec<F>
     where
         F: Field,
@@ -378,6 +598,28 @@ where
         Ok(())
     }
 
+    /// Verify an evaluation proof for the committed polynomial
+    ///
+    /// Verifies that a polynomial evaluates to a claimed value at a given point
+    /// using the FRI-based proof in the transcript.
+    ///
+    /// # Arguments
+    ///
+    /// * `verifier_transcript` - Transcript containing the proof
+    /// * `evaluation_claim` - Claimed evaluation result
+    /// * `evaluation_point` - Point at which polynomial was evaluated
+    /// * `fri_params` - FRI protocol parameters
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Proof is valid
+    /// * `Err(String)` - Proof is invalid or verification failed
+    ///
+    /// # Process
+    ///
+    /// 1. Extract commitment from transcript
+    /// 2. Run FRI verification protocol
+    /// 3. Check consistency with claimed evaluation
     fn verify_evaluation(
         &self,
         verifier_transcript: &mut VerifierTranscript<StdChallenger>,
@@ -385,6 +627,7 @@ where
         evaluation_point: &[P::Scalar],
         fri_params: &FRIParams<P::Scalar>,
     ) -> Result<(), String> {
+        // Extract commitment from transcript
         let retrieved_codeword_commitment = verifier_transcript
             .message()
             .read()
@@ -402,6 +645,26 @@ where
         .map_err(|e| e.to_string())
     }
 
+    /// Generate a Merkle inclusion proof for a specific codeword position
+    ///
+    /// Creates a proof that a value at a given index is part of the committed
+    /// codeword. This is used for data availability sampling.
+    ///
+    /// # Arguments
+    ///
+    /// * `committed` - Merkle tree commitment structure
+    /// * `index` - Position in the codeword to prove
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(VerifierTranscript)` - Transcript containing the inclusion proof
+    /// * `Err(String)` - Error generating the proof
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let proof = friveil.inclusion_proof(&commit_output.committed, 42)?;
+    /// ```
     fn inclusion_proof(
         &self,
         committed: &<BinaryMerkleTreeProver<
@@ -421,6 +684,35 @@ where
         Ok(proof_reader)
     }
 
+    /// Verify a Merkle inclusion proof for a codeword value
+    ///
+    /// Verifies that a value at a specific index is correctly committed
+    /// in the Merkle tree. This is the verification counterpart to `inclusion_proof`.
+    ///
+    /// # Arguments
+    ///
+    /// * `verifier_transcript` - Transcript containing the inclusion proof
+    /// * `data` - Value(s) to verify
+    /// * `index` - Position in the codeword
+    /// * `fri_params` - FRI parameters (for context)
+    /// * `commitment` - Merkle root commitment (32 bytes)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Inclusion proof is valid
+    /// * `Err(String)` - Proof is invalid or verification failed
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// friveil.verify_inclusion_proof(
+    ///     &mut proof,
+    ///     &[value],
+    ///     index,
+    ///     &fri_params,
+    ///     commitment_bytes,
+    /// )?;
+    /// ```
     fn verify_inclusion_proof(
         &self,
         verifier_transcript: &mut VerifierTranscript<StdChallenger>,
@@ -443,6 +735,34 @@ where
             .map_err(|e| e.to_string())
     }
 
+    /// Decode a Reed-Solomon encoded codeword back to original data
+    ///
+    /// Applies inverse Reed-Solomon transformation to recover the original
+    /// data from the encoded codeword. This is the inverse of `encode_codeword`.
+    ///
+    /// # Arguments
+    ///
+    /// * `codeword` - Reed-Solomon encoded codeword
+    /// * `fri_params` - FRI parameters containing RS code configuration
+    /// * `ntt` - NTT instance for efficient decoding
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<P::Scalar>)` - Decoded original data
+    /// * `Err(String)` - Error message if decoding fails
+    ///
+    /// # Process
+    ///
+    /// 1. Calculate expected output length
+    /// 2. Apply inverse NTT transformation
+    /// 3. Trim to original data size (remove redundancy)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let decoded = friveil.decode_codeword(&encoded, fri_params, &ntt)?;
+    /// assert_eq!(decoded, original_data);
+    /// ```
     fn decode_codeword(
         &self,
         codeword: &[P::Scalar],
@@ -464,15 +784,34 @@ where
         .map_err(|e| e.to_string())?;
 
         unsafe {
-            // Safety: encode_ext_batch guarantees all elements are initialized on success
+            // Safety: decode_batch guarantees all elements are initialized on success
             decoded.set_len(len);
         }
 
+        // Trim to original data size (remove redundancy)
         let trim_len = 1 << (rs_code.log_dim() + fri_params.log_batch_size() - P::LOG_WIDTH);
         decoded.resize(trim_len, P::Scalar::zero());
         Ok(decoded)
     }
 
+    /// Extract commitment from verifier transcript
+    ///
+    /// Helper function to read the commitment bytes from a transcript.
+    /// This is used internally for verification workflows.
+    ///
+    /// # Arguments
+    ///
+    /// * `verifier_transcript` - Transcript containing the commitment
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<u8>)` - Commitment bytes
+    /// * `Err(String)` - Error reading from transcript
+    ///
+    /// # Note
+    ///
+    /// Marked as `#[allow(dead_code)]` as it's currently unused but
+    /// may be useful for future transcript manipulation.
     #[allow(dead_code)]
     fn extract_commitment(
         &self,
@@ -484,6 +823,35 @@ where
             .map_err(|e| e.to_string())
     }
 
+    /// Low-level batch decoding using inverse NTT
+    ///
+    /// Performs the actual Reed-Solomon decoding operation using inverse NTT.
+    /// This is called by `decode_codeword` and handles the core transformation.
+    ///
+    /// # Arguments
+    ///
+    /// * `log_len` - Logarithm of codeword length
+    /// * `log_inv` - Logarithm of inverse rate (redundancy factor)
+    /// * `log_batch_size` - Logarithm of batch size
+    /// * `ntt` - NTT instance for transformation
+    /// * `data` - Input codeword data
+    /// * `output` - Uninitialized output buffer
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Decoding successful, output buffer is initialized
+    /// * `Err(String)` - Decoding failed
+    ///
+    /// # Safety
+    ///
+    /// On success, guarantees that all elements in `output` are properly initialized.
+    ///
+    /// # Implementation Details
+    ///
+    /// 1. Validates input dimensions
+    /// 2. Copies data to output buffer
+    /// 3. Applies inverse NTT with appropriate skip parameters
+    /// 4. Handles both packed and unpacked field representations
     fn decode_batch(
         &self,
         log_len: usize,
