@@ -1,7 +1,8 @@
+use crate::traits::{FriVeilSampling, FriVeilUtils};
 pub use binius_field::PackedField;
 use binius_field::{ExtensionField, Field, PackedExtension, Random};
 use binius_math::{
-    BinarySubspace, FieldBuffer, ReedSolomonCode,
+    BinarySubspace, FieldBuffer, FieldSliceMut, ReedSolomonCode,
     inner_product::inner_product,
     multilinear::eq::eq_ind_partial_eval,
     ntt::{
@@ -26,7 +27,7 @@ use binius_verifier::{
 };
 use itertools::Itertools;
 use rand::{SeedableRng, rngs::StdRng};
-use std::{iter::repeat_with, marker::PhantomData};
+use std::{iter::repeat_with, marker::PhantomData, mem::MaybeUninit};
 use tracing::debug;
 
 #[cfg(feature = "parallel")]
@@ -120,13 +121,13 @@ where
 
     pub fn calculate_evaluation_point_random(&self) -> Result<Vec<P::Scalar>, String> {
         let mut rng = StdRng::from_seed([0; 32]);
+        println!("self.n_vars {}", self.n_vars);
         let evaluation_point: Vec<P::Scalar> = repeat_with(|| P::Scalar::random(&mut rng))
             .take(self.n_vars)
             .collect();
         Ok(evaluation_point)
     }
 
-    // TODO: optimise
     pub fn calculate_evaluation_claim(
         &self,
         values: &[P::Scalar],
@@ -264,56 +265,7 @@ where
     }
 }
 
-pub trait FriVeilSampling<
-    P: PackedField<Scalar = B128> + PackedExtension<B128> + PackedExtension<B1>,
->
-{
-    fn reconstruct_codeword_naive(
-        &self,
-        corrupted_codeword: &mut [P::Scalar],
-        corrupted_indices: &[usize],
-    ) -> Result<(), String>;
-    fn verify_evaluation(
-        &self,
-        verifier_transcript: &mut VerifierTranscript<StdChallenger>,
-        evaluation_claim: P::Scalar,
-        evaluation_point: &[P::Scalar],
-        fri_params: &FRIParams<P::Scalar>,
-    ) -> Result<(), String>;
-
-    fn verify_inclusion_proof(
-        &self,
-        verifier_transcript: &mut VerifierTranscript<StdChallenger>,
-        data: &[P::Scalar],
-        index: usize,
-        fri_params: &FRIParams<P::Scalar>,
-        commitment: [u8; 32],
-    ) -> Result<(), String>;
-
-    fn inclusion_proof(
-        &self,
-        committed: &<BinaryMerkleTreeProver<
-            P::Scalar,
-            StdDigest,
-            ParallelCompressionAdaptor<StdCompression>,
-        > as MerkleTreeProver<P::Scalar>>::Committed,
-        index: usize,
-    ) -> Result<VerifierTranscript<StdChallenger>, String>;
-
-    fn decode_codeword(
-        &self,
-        codeword: &[P::Scalar],
-        fri_params: FRIParams<P::Scalar>,
-        ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
-    ) -> Result<Vec<P::Scalar>, String>;
-
-    fn extract_commitment(
-        &self,
-        verifier_transcript: &mut VerifierTranscript<StdChallenger>,
-    ) -> Result<Vec<u8>, String>;
-}
-
-impl<'a, P, VCS, NTT> FriVeilSampling<P> for FriVeil<'a, P, VCS, NTT>
+impl<'a, P, VCS, NTT> FriVeilSampling<P, NTT> for FriVeil<'a, P, VCS, NTT>
 where
     NTT: AdditiveNTT<Field = B128> + Sync,
     P: PackedField<Scalar = B128> + PackedExtension<B128> + PackedExtension<B1>,
@@ -502,14 +454,16 @@ where
         let len = 1 << (rs_code.log_len() + fri_params.log_batch_size() - P::LOG_WIDTH);
 
         let mut decoded = Vec::with_capacity(len);
-        rs_code
-            .decode_batch(
-                ntt,
-                codeword.as_ref(),
-                decoded.spare_capacity_mut(),
-                fri_params.log_batch_size(),
-            )
-            .map_err(|e| e.to_string())?;
+        self.decode_batch(
+            rs_code.log_len(),
+            rs_code.log_inv_rate(),
+            fri_params.log_batch_size(),
+            ntt,
+            codeword.as_ref(),
+            decoded.spare_capacity_mut(),
+        )
+        .map_err(|e| e.to_string())?;
+
         unsafe {
             // Safety: encode_ext_batch guarantees all elements are initialized on success
             decoded.set_len(len);
@@ -530,13 +484,82 @@ where
             .read()
             .map_err(|e| e.to_string())
     }
-}
-pub trait FriVeilUtils {
-    fn get_transcript_bytes(&self, transcript: &VerifierTranscript<StdChallenger>) -> Vec<u8>;
-    fn reconstruct_transcript_from_bytes(
+
+    fn decode_batch(
         &self,
-        bytes: Vec<u8>,
-    ) -> VerifierTranscript<StdChallenger>;
+        log_len: usize,
+        log_inv: usize,
+        log_batch_size: usize,
+        ntt: &NeighborsLastMultiThread<GenericPreExpanded<P::Scalar>>,
+        data: &[P::Scalar],
+        output: &mut [MaybeUninit<P::Scalar>],
+    ) -> Result<(), String> {
+        let data_log_len = log_len + log_batch_size;
+
+        let expected_data_len = if data_log_len >= P::LOG_WIDTH {
+            1 << (data_log_len - P::LOG_WIDTH)
+        } else {
+            1
+        };
+
+        if data.len() != expected_data_len {
+            return Err(format!(
+                "Unexpected data length: {} {} ",
+                expected_data_len,
+                data.len()
+            ));
+        }
+
+        let _scope = tracing::trace_span!(
+            "Reed-Solomon encode",
+            log_len = log_len,
+            log_batch_size = log_batch_size,
+        )
+        .entered();
+
+        let data_portion_len = data.len();
+
+        for i in 0..data_portion_len {
+            output[i].write(data[i]);
+        }
+
+        for i in data_portion_len..output.len() {
+            output[i].write(P::Scalar::zero());
+        }
+
+        let output_initialized =
+            unsafe { uninit::out_ref::Out::<[P::Scalar]>::from(output).assume_init() };
+        let mut code = FieldSliceMut::from_slice(log_len + log_batch_size, output_initialized)
+            .map_err(|e| e.to_string())?;
+
+        let skip_early = log_inv;
+        let skip_late = log_batch_size;
+
+        // TODO: create an optimised version PR to binius 64 for inverse_ntt
+        let log_d = code.log_len();
+        use binius_math::ntt::DomainContext;
+        for layer in (skip_early..(log_d - skip_late)).rev() {
+            let num_blocks = 1 << layer;
+            let block_size_half = 1 << (log_d - layer - 1);
+            for block in 0..num_blocks {
+                let twiddle = ntt.domain_context().twiddle(layer, block);
+                let block_start = block << (log_d - layer);
+                for idx0 in block_start..(block_start + block_size_half) {
+                    let idx1 = block_size_half | idx0;
+                    // perform butterfly
+                    let mut u = code.get(idx0).unwrap();
+                    let mut v = code.get(idx1).unwrap();
+
+                    v += u;
+                    u += v * twiddle;
+                    code.set(idx0, u).unwrap();
+                    code.set(idx1, v).unwrap();
+                }
+            }
+        }
+        println!("code: {:?}", code);
+        Ok(())
+    }
 }
 
 impl FriVeilUtils for FriVeilDefault {
@@ -849,5 +872,89 @@ mod tests {
             verify_result.is_err(),
             "Verification should fail with wrong evaluation claim"
         );
+    }
+
+    #[test]
+    fn test_data_availability_sampling() {
+        use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
+        use tracing::{Level, debug, info, span, warn};
+
+        // Initialize logging for the test
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+
+        // Create test data
+        let test_data = create_test_data(1024 * 1024); // 1MB test data
+        let packed_mle_values = Utils::<B128>::new()
+            .bytes_to_packed_mle(&test_data)
+            .expect("Failed to create packed MLE");
+
+        let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
+
+        // Initialize FRI context
+        let (fri_params, ntt) = friveil
+            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .expect("Failed to initialize FRI context");
+
+        // Commit to MLE
+        let commit_output = friveil
+            .commit(
+                packed_mle_values.packed_mle.clone(),
+                fri_params.clone(),
+                &ntt,
+            )
+            .expect("Failed to commit");
+
+        let total_samples = commit_output.codeword.len();
+        let sample_size = total_samples / 2;
+        let indices =
+            sample(&mut StdRng::from_seed([0; 32]), total_samples, sample_size).into_vec();
+        let commitment_bytes: [u8; 32] = commit_output
+            .commitment
+            .to_vec()
+            .try_into()
+            .expect("We know commitment size is 32 bytes");
+
+        let mut successful_samples = 0;
+        let mut failed_samples = Vec::new();
+
+        for &sample_index in indices.iter() {
+            match friveil.inclusion_proof(&commit_output.committed, sample_index) {
+                Ok(mut inclusion_proof) => {
+                    let value = commit_output.codeword[sample_index];
+                    match friveil.verify_inclusion_proof(
+                        &mut inclusion_proof,
+                        &[value],
+                        sample_index,
+                        &fri_params,
+                        commitment_bytes,
+                    ) {
+                        Ok(_) => {
+                            successful_samples += 1;
+                        }
+                        Err(e) => {
+                            failed_samples
+                                .push((sample_index, format!("Verification failed: {}", e)));
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed_samples.push((
+                        sample_index,
+                        format!("Inclusion proof generation failed: {}", e),
+                    ));
+                }
+            }
+        }
+
+        assert_eq!(failed_samples.len(), 0, "Some samples failed verification");
+        assert_eq!(
+            successful_samples, sample_size,
+            "Not all samples were verified"
+        );
+
+        println!("Successfully verified {} samples", successful_samples);
     }
 }

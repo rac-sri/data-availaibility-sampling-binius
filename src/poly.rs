@@ -1,9 +1,9 @@
 use binius_field::{ExtensionField, PackedField};
-use binius_math::FieldBuffer;
+use binius_math::{Error, FieldBuffer, FieldSliceMut, ntt::AdditiveNTT};
 use binius_verifier::config::B1;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::marker::PhantomData;
+use std::{marker::PhantomData, mem::MaybeUninit};
 use tracing::debug;
 
 const BYTES_PER_ELEMENT: usize = 16; // 128 bit = 16 bytes
@@ -41,10 +41,8 @@ where
         let padded_size = num_elements.next_power_of_two();
 
         let big_field_n_vars = padded_size.ilog2() as usize;
-        debug!("N vars: {:?}", big_field_n_vars);
-
         let packed_size = 1 << big_field_n_vars;
-        debug!("Packed size: {:?}", packed_size);
+        println!("Packed size: {:?}", packed_size);
 
         #[cfg(feature = "parallel")]
         let mut packed_values: Vec<P::Scalar> = {
@@ -69,14 +67,15 @@ where
             values
         };
 
-        debug!("Packed values: {:?}", packed_values.len());
+        println!("Packed values original: {:?}", packed_values.len());
         packed_values.resize(packed_size, P::Scalar::zero());
 
-        debug!("Packed values: {:?}", packed_values.len());
+        println!("Packed values: {:?}", packed_values.len());
 
         let packed_mle =
             FieldBuffer::<P>::from_values(packed_values.as_slice()).map_err(|e| e.to_string())?;
 
+        println!("Packed mle: {:?}", packed_mle.len());
         let big_field_n_vars = packed_mle.log_len();
         let total_n_vars = big_field_n_vars + self.log_scalar_bit_width;
 

@@ -19,6 +19,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rayon = {version = "1.8", optional = true}
 clap = { version = "4.0", features = ["derive"] }
+uninit = "0.6.2"
 
 [dev-dependencies]
 divan = { version = "0.1"}
