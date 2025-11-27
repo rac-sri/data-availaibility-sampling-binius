@@ -20,20 +20,20 @@ fn main() {
     );
 
     // // Initialize FRI context to get fri_params
-    let (fri_params, _) = friveil
-        .initialize_fri_context(guest_input.packed_values_log_len)
-        .expect("Failed to initialize FRI context");
+    // let (fri_params, _) = friveil
+    //     .initialize_fri_context(guest_input.packed_values_log_len)
+    //     .expect("Failed to initialize FRI context");
 
-    for (i, proof) in guest_input.data.iter().enumerate() {
-        let mut verifier_transcript = friveil.reconstruct_transcript_from_bytes(proof.to_vec());
+    // for (i, proof) in guest_input.data.iter().enumerate() {
+    //     let mut verifier_transcript = friveil.reconstruct_transcript_from_bytes(proof.to_vec());
 
-        let result = friveil.verify_evaluation(
-            &mut verifier_transcript,
-            guest_input.evaluation_claim,
-            &guest_input.evaluation_point,
-            &fri_params,
-        );
-    }
+    //     let result = friveil.verify_evaluation(
+    //         &mut verifier_transcript,
+    //         guest_input.evaluation_claim,
+    //         &guest_input.evaluation_point,
+    //         &fri_params,
+    //     );
+    // }
 
     // TODO: do something with the input
 
