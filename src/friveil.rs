@@ -632,6 +632,7 @@ where
             .map_err(|e| e.to_string())?;
 
         let merkle_prover_scheme = self.merkle_prover.scheme().clone();
+
         verify(
             verifier_transcript,
             evaluation_claim,
