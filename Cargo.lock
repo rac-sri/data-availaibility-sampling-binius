@@ -3,6 +3,25 @@
 version = 4
 
 [[package]]
+name = "FRIVeil"
+version = "0.1.0"
+dependencies = [
+ "binius-field",
+ "binius-math",
+ "binius-prover",
+ "binius-transcript",
+ "binius-verifier",
+ "clap",
+ "divan",
+ "itertools",
+ "rand",
+ "rayon",
+ "tracing",
+ "tracing-subscriber",
+ "uninit",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -96,25 +115,6 @@ dependencies = [
  "bytemuck",
  "bytes",
  "thiserror",
-]
-
-[[package]]
-name = "binius-das-poc"
-version = "0.1.0"
-dependencies = [
- "binius-field",
- "binius-math",
- "binius-prover",
- "binius-transcript",
- "binius-verifier",
- "clap",
- "divan",
- "itertools",
- "rand",
- "rayon",
- "tracing",
- "tracing-subscriber",
- "uninit",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
-use binius_das_poc::{
+use FRIVeil::{
     friveil::{B128, FriVeilDefault, PackedField},
     poly::Utils,
-    traits::{FriVeilSampling, FriVeilUtils},
+    traits::{FRIVeilSampling, FriVeilUtils},
 };
 use rand::{SeedableRng, rngs::StdRng, seq::index::sample};
 use std::time::Instant;
@@ -95,7 +95,7 @@ fn test_integration_main() {
     info!("⚙️  Setting up FRI protocol parameters");
     let start = Instant::now();
     let (fri_params, ntt) = friveil
-        .initialize_fri_context(packed_mle_values.packed_mle.clone())
+        .initialize_fri_context(packed_mle_values.packed_mle.log_len())
         .unwrap();
     let context_time = start.elapsed().as_millis();
     info!("✅ FRI context setup completed in {} ms", context_time);

@@ -1,4 +1,4 @@
-use binius_das_poc::{friveil::FriVeilDefault, poly::Utils};
+use FRIVeil::{friveil::FriVeilDefault, poly::Utils};
 use divan::Bencher;
 use rand::Rng;
 
@@ -19,7 +19,7 @@ fn build_commitments_32mib_redundancy_factor_2(bencher: Bencher) {
             .expect("Data should be convertible to packed MLE values");
         let friveil = FriVeilDefault::new(1, 100, packed_mle_values.total_n_vars, 3);
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("FRI context should initialize successfully");
         let _ = friveil
             .commit(
@@ -42,7 +42,7 @@ fn build_commitments_32mib_redundancy_factor_4(bencher: Bencher) {
             .expect("Data should be convertible to packed MLE values");
         let friveil = FriVeilDefault::new(2, 100, packed_mle_values.total_n_vars, 3);
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("FRI context should initialize successfully");
         let _ = friveil
             .commit(

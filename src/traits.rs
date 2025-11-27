@@ -14,7 +14,7 @@ use binius_verifier::{
 };
 use std::mem::MaybeUninit;
 
-pub trait FriVeilSampling<
+pub trait FRIVeilSampling<
     P: PackedField<Scalar = B128> + PackedExtension<B128> + PackedExtension<B1>,
     NTT: AdditiveNTT<Field = B128> + Sync,
 >
