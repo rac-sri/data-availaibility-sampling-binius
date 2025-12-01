@@ -3,52 +3,49 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct GuestInput {
-    pub data: Vec<Vec<u8>>,
-    #[serde(with = "b128_vec_serde")]
-    pub evaluation_point: Vec<B128>,
-    #[serde(with = "b128_serde")]
-    pub evaluation_claim: B128,
+    pub data_flat: Vec<u8>,
+    pub proof_lengths: Vec<usize>,
+    pub evaluation_point: Vec<[u8; 16]>,
+    pub evaluation_claim: [u8; 16],
     pub packed_values_log_len: usize,
 }
 
-mod b128_serde {
-    use FRIVeil::friveil::B128;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(value: &B128, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let u128_val: u128 = (*value).into();
-        u128_val.serialize(serializer)
+impl GuestInput {
+    /// Get a specific proof by index without allocation
+    /// Returns a slice into the flat buffer
+    pub fn get_proof(&self, index: usize) -> &[u8] {
+        let start: usize = self.proof_lengths[..index].iter().sum();
+        let end = start + self.proof_lengths[index];
+        &self.data_flat[start..end]
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<B128, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let u128_val = u128::deserialize(deserializer)?;
-        Ok(B128::from(u128_val))
-    }
-}
-
-mod b128_vec_serde {
-    use FRIVeil::friveil::B128;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(values: &Vec<B128>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let u128_values: Vec<u128> = values.iter().map(|v| (*v).into()).collect();
-        u128_values.serialize(serializer)
+    /// Get number of proofs
+    pub fn num_proofs(&self) -> usize {
+        self.proof_lengths.len()
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<B128>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let u128_values = Vec::<u128>::deserialize(deserializer)?;
-        Ok(u128_values.into_iter().map(B128::from).collect())
+    /// Create GuestInput from individual proof bytes
+    /// Helper for host-side construction
+    pub fn from_proofs(
+        proofs: Vec<Vec<u8>>,
+        evaluation_point: Vec<B128>,
+        evaluation_claim: B128,
+        packed_values_log_len: usize,
+    ) -> Self {
+        let proof_lengths: Vec<usize> = proofs.iter().map(|p| p.len()).collect();
+        let data_flat: Vec<u8> = proofs.into_iter().flatten().collect();
+        let evaluation_point: Vec<[u8; 16]> = evaluation_point
+            .into_iter()
+            .map(|b128| b128.val().to_le_bytes())
+            .collect();
+        let evaluation_claim: [u8; 16] = evaluation_claim.val().to_le_bytes();
+
+        Self {
+            data_flat,
+            proof_lengths,
+            evaluation_point,
+            evaluation_claim,
+            packed_values_log_len,
+        }
     }
 }

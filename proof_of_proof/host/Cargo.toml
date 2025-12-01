@@ -13,3 +13,4 @@ tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 FRIVeil = {path="../../"}
 proof-core = {path = "../core"}
+bincode = {version = "1.3"}

@@ -8,5 +8,7 @@ edition = "2021"
 [dependencies]
 risc0-zkvm = { version = "^3.0.4", default-features = false, features = ['std'] }
 risc0-zkvm-platform = { version = "2.1.1", features = ["sys-getenv"] }
+bincode = {version = "1.3"}
 FRIVeil = {path="../../../"}
 proof-core = {path="../../core"}
+

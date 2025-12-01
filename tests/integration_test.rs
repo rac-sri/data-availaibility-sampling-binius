@@ -603,16 +603,17 @@ async fn test_integration_zkvm() {
         Err(e) => info!("❌ Evaluation proof verification failed: {}", e),
     }
 
-    let data = vec![proof];
+    let data = vec![proof.clone()];
 
     let client = reqwest::Client::new();
 
-    let request_data = GuestInput {
+    // Use the optimized from_proofs constructor
+    let request_data = GuestInput::from_proofs(
         data,
-        evaluation_claim,
         evaluation_point,
-        packed_values_log_len: packed_mle_values.packed_mle.log_len(),
-    };
+        evaluation_claim,
+        packed_mle_values.packed_mle.log_len(),
+    );
 
     let data = client
         .post("http://localhost:3000/get_proof")
