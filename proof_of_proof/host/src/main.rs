@@ -32,7 +32,8 @@ async fn get_proof_handler(Json(body): Json<GuestInput>) -> impl IntoResponse {
 }
 
 fn prove(guest_input: GuestInput) -> Result<Receipt, Box<dyn std::error::Error>> {
-    let serialized = serialize(&guest_input)?;
+    let guest_input_tuple = guest_input.to_tuple();
+    let serialized = serialize(&guest_input_tuple)?;
 
     let env = ExecutorEnv::builder().write_slice(&serialized).build()?;
 
@@ -46,3 +47,6 @@ fn prove(guest_input: GuestInput) -> Result<Receipt, Box<dyn std::error::Error>>
 
     Ok(receipt)
 }
+//4718592
+//4718592
+//1572864
