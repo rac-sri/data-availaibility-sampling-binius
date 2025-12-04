@@ -149,7 +149,7 @@ where
     /// * `Err(String)` - Error message if initialization fails
     pub fn initialize_fri_context(
         &self,
-        packed_buffer: FieldBuffer<P>,
+        packed_buffer_log_len: usize,
     ) -> Result<
         (
             FRIParams<P::Scalar>,
@@ -158,14 +158,14 @@ where
         String,
     > {
         let committed_rs_code =
-            ReedSolomonCode::<B128>::new(packed_buffer.log_len(), self.log_inv_rate).unwrap();
+            ReedSolomonCode::<B128>::new(packed_buffer_log_len, self.log_inv_rate).unwrap();
 
         let fri_log_batch_size = 0;
 
         let fri_arities = if P::LOG_WIDTH == 2 {
             vec![2, 2]
         } else {
-            vec![2; packed_buffer.log_len() / 2]
+            vec![2; packed_buffer_log_len / 2]
         };
 
         let fri_params = FRIParams::new(
@@ -1042,7 +1042,7 @@ mod tests {
             .bytes_to_packed_mle(&test_data)
             .expect("Failed to create packed MLE");
 
-        let result = friveil.initialize_fri_context(packed_mle_values.packed_mle.clone());
+        let result = friveil.initialize_fri_context(packed_mle_values.packed_mle.log_len());
         assert!(result.is_ok());
 
         let (fri_params, _ntt) = result.unwrap();
@@ -1063,7 +1063,7 @@ mod tests {
             .expect("Failed to create packed MLE");
 
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("Failed to initialize FRI context");
 
         // Test commit
@@ -1142,7 +1142,7 @@ mod tests {
         let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
         // Initialize FRI context
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("Failed to initialize FRI context");
 
         // Generate evaluation point
@@ -1199,7 +1199,7 @@ mod tests {
             .expect("Failed to create packed MLE");
         let friveil = TestFriVeil::new(1, 3, packed_mle_values.total_n_vars, 3);
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("Failed to initialize FRI context");
 
         let commit_output = friveil
@@ -1262,7 +1262,7 @@ mod tests {
 
         // Initialize FRI context
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("Failed to initialize FRI context");
 
         // Commit to MLE
@@ -1337,7 +1337,7 @@ mod tests {
 
         // Initialize FRI context
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("Failed to initialize FRI context");
 
         // Encode codeword
@@ -1373,7 +1373,7 @@ mod tests {
 
         // Initialize FRI context
         let (fri_params, ntt) = friveil
-            .initialize_fri_context(packed_mle_values.packed_mle.clone())
+            .initialize_fri_context(packed_mle_values.packed_mle.log_len())
             .expect("Failed to initialize FRI context");
 
         // Encode codeword
