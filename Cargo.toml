@@ -23,6 +23,7 @@ uninit = "0.6.2"
 
 [dev-dependencies]
 divan = { version = "0.1"}
+kate = { git = "https://github.com/availproject/avail-core", rev = "d33781a3b7f6817105b88057b8754df86e69f385" }
 rand = { version = "0.9.1", default-features = false, features = [
     "std",
     "std_rng",
