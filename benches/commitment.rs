@@ -13,6 +13,7 @@ fn main() {
 }
 
 // A simple opinionated function to build KZG commitments over the data
+#[cfg(feature = "kzg")]
 pub fn kzg_commitment(data: &[u8], with_redundancy: bool, srs: &M1NoPrecomp) -> Vec<u8> {
     let max_width = srs.powers_of_g1.len();
     let max_height = u16::MAX as usize;
@@ -39,6 +40,7 @@ pub fn kzg_commitment(data: &[u8], with_redundancy: bool, srs: &M1NoPrecomp) -> 
     commitment_bytes
 }
 
+#[cfg(feature = "kzg")]
 #[divan::bench(max_time = 10)]
 fn kzg_16mb_with_redundancy(bencher: Bencher) {
     let srs = multiproof_params();
@@ -49,6 +51,7 @@ fn kzg_16mb_with_redundancy(bencher: Bencher) {
     });
 }
 
+#[cfg(feature = "kzg")]
 #[divan::bench(max_time = 10)]
 fn kzg_16mb_without_redundancy(bencher: Bencher) {
     let srs = multiproof_params();
