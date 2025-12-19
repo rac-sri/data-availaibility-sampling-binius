@@ -1,5 +1,5 @@
-use binius_das_poc::{friveil::FriVeilDefault, poly::Utils};
 use divan::Bencher;
+use frivail::{friveil::FriVeilDefault, poly::Utils};
 #[cfg(feature = "kzg")]
 use kate::{
     M1NoPrecomp,

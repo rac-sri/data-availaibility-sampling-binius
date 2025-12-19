@@ -1,4 +1,4 @@
-use binius_das_poc::{
+use frivail::{
     friveil::{B128, FriVeilDefault, PackedField},
     poly::Utils,
     traits::{FriVeilSampling, FriVeilUtils},
